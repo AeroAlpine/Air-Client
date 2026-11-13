@@ -715,6 +715,39 @@ public final class ScreenUtil {
         });
     }
 
+    /**
+     * Middle click on a menu slot, like the experiment table macro. Survival players get no
+     * local pickup prediction for it: nothing jumps onto the cursor, and Hypixel menus treat
+     * it like any other click on a button.
+     */
+    public static void middleClickSlot(int slot) {
+        onClient(() -> middleClickNow(slot));
+    }
+
+    /** Normal click on the calling (client) thread, without a frame of delay. */
+    public static boolean clickNow(int slot, int button) {
+        Minecraft client = Minecraft.getInstance();
+        if (!(client.gui.screen() instanceof AbstractContainerScreen<?> container)
+                || client.player == null || client.gameMode == null || slot < 0) {
+            return false;
+        }
+        client.gameMode.handleContainerInput(container.getMenu().containerId, slot, button,
+                ContainerInput.PICKUP, client.player);
+        return true;
+    }
+
+    /** {@link #middleClickSlot} on the calling (client) thread, without a frame of delay. */
+    public static boolean middleClickNow(int slot) {
+        Minecraft client = Minecraft.getInstance();
+        if (!(client.gui.screen() instanceof AbstractContainerScreen<?> container)
+                || client.player == null || client.gameMode == null || slot < 0) {
+            return false;
+        }
+        client.gameMode.handleContainerInput(container.getMenu().containerId, slot, 2,
+                ContainerInput.CLONE, client.player);
+        return true;
+    }
+
     public static String screenTitle() {
         return sync(() -> {
             Minecraft client = Minecraft.getInstance();

@@ -3,6 +3,7 @@
   "package": "com.coflnet.mixin",
   "compatibilityLevel": "JAVA_25",
   "client": [
+    "AhInstantClickMixin",
     "BackgroundAutomationMixin",
     "BackgroundFramerateMixin",
     "ChatScreenMixin",

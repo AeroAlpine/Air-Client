@@ -141,7 +141,7 @@ public class MovementHighAscend extends Movement {
             if (ctx.player().onGround()) {
                 return state.setStatus(MovementStatus.SUCCESS);
             }
-            MovementHelper.moveTowards(ctx, state, dest);
+            MovementHelper.steerWhileLanding(ctx, state, src, dest);
             state.setInput(Input.SPRINT, false);
             return state;
         }

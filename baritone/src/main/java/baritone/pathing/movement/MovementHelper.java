@@ -641,6 +641,24 @@ public interface MovementHelper extends ActionCosts, Helper {
     }
 
     /**
+     * Air Client: a bottom stair whose low step faces a player moving by (dx, dz). Going up
+     * onto it is two half-block steps, which the player walks without jumping. Inner corners
+     * are left out: one side of their front is full height.
+     */
+    static boolean isStairStepUp(BlockState state, int dx, int dz) {
+        if (!(state.getBlock() instanceof StairBlock) || state.getValue(StairBlock.HALF) != Half.BOTTOM) {
+            return false;
+        }
+        StairsShape shape = state.getValue(StairBlock.SHAPE);
+        if (shape == StairsShape.INNER_LEFT || shape == StairsShape.INNER_RIGHT) {
+            return false;
+        }
+        Direction facing = state.getValue(StairBlock.FACING);
+        return facing.getStepX() == Integer.signum(dx) && facing.getStepZ() == Integer.signum(dz)
+                && (dx == 0 || dz == 0);
+    }
+
+    /**
      * AutoTool for a specific block
      *
      * @param ctx The player context
@@ -663,7 +681,44 @@ public interface MovementHelper extends ActionCosts, Helper {
         }
     }
 
+    /**
+     * Air Client: below this horizontal distance to the block centre the yaw towards it is
+     * unstable (a few centimetres of drift turn the camera by 90 degrees and more).
+     */
+    double STEADY_YAW_RADIUS = 0.35;
+
+    /**
+     * Walk towards the centre of {@code pos}. Air Client: close to the centre the current yaw
+     * is kept instead of aiming at it; aiming there spun the camera around after jumps and on
+     * stairs, which looked twitchy and made the movement stutter.
+     */
     static void moveTowards(IPlayerContext ctx, MovementState state, BlockPos pos) {
+        Vec3 center = VecUtils.getBlockPosCenter(pos);
+        double dx = center.x - ctx.player().position().x;
+        double dz = center.z - ctx.player().position().z;
+        if (dx * dx + dz * dz < STEADY_YAW_RADIUS * STEADY_YAW_RADIUS) {
+            state.setTarget(new MovementTarget(ctx.playerRotations(), false)).setInput(Input.MOVE_FORWARD, true);
+            return;
+        }
+        moveTowardsExact(ctx, state, pos);
+    }
+
+    /**
+     * Air Client: in the air above the landing block after a jump. The camera stays as it is and
+     * forward is only held until the centre is reached, so the landing neither spins the view
+     * nor overshoots onto the next block.
+     */
+    static void steerWhileLanding(IPlayerContext ctx, MovementState state, BlockPos src, BlockPos dest) {
+        state.setTarget(new MovementTarget(ctx.playerRotations(), false));
+        double dirX = Integer.signum(dest.getX() - src.getX());
+        double dirZ = Integer.signum(dest.getZ() - src.getZ());
+        double ahead = (dest.getX() + 0.5 - ctx.player().position().x) * dirX
+                + (dest.getZ() + 0.5 - ctx.player().position().z) * dirZ;
+        state.setInput(Input.MOVE_FORWARD, ahead > 0.15);
+    }
+
+    /** Baritone's original: always aim at the block centre (pillar / downward need that). */
+    static void moveTowardsExact(IPlayerContext ctx, MovementState state, BlockPos pos) {
         state.setTarget(new MovementTarget(
                 RotationUtils.calcRotationFromVec3d(ctx.playerHead(),
                         VecUtils.getBlockPosCenter(pos),

@@ -361,7 +361,10 @@ public class PathExecutor implements IPathExecutor, Helper {
                     pathPosition++;
                     onChangeInPathPosition();
                     onTick();
-                    behavior.baritone.getInputOverrideHandler().setInputForceState(Input.JUMP, true);
+                    // Air Client: a stair is walked up, a sprint jump onto it only hops and stutters
+                    if (!isStairStep((MovementAscend) next)) {
+                        behavior.baritone.getInputOverrideHandler().setInputForceState(Input.JUMP, true);
+                    }
                     return true;
                 } else {
                     logDebug("Too far to the side to safely sprint ascend");
@@ -525,6 +528,12 @@ public class PathExecutor implements IPathExecutor, Helper {
         // wait 0.3
         double flatDist = Math.abs(current.getDirection().getX() * (headBonk.getX() + 0.5D - ctx.player().position().x)) + Math.abs(current.getDirection().getZ() * (headBonk.getZ() + 0.5 - ctx.player().position().z));
         return flatDist > 0.8;
+    }
+
+    private boolean isStairStep(MovementAscend ascend) {
+        BlockPos onto = ascend.getDest().below();
+        return MovementHelper.isStairStepUp(ctx.world().getBlockState(onto),
+                ascend.getDest().getX() - ascend.getSrc().getX(), ascend.getDest().getZ() - ascend.getSrc().getZ());
     }
 
     private static boolean sprintableAscend(IPlayerContext ctx, MovementTraverse current, MovementAscend next, IMovement nextnext) {
