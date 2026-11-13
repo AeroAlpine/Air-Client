@@ -7,21 +7,31 @@ import net.fabricmc.loader.api.FabricLoader;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
-import java.time.LocalDateTime;
-import java.time.ZoneId;
+import java.time.LocalDate;
+import java.time.ZoneOffset;
 
 /**
- * Tracks the gross value of Bazaar sell offers created during one Hypixel
- * trading day. The day rolls over at 02:00 Europe/Berlin, and the value is
- * persisted so restarts/reconnects cannot reset it early.
+ * Hypixel's two daily Bazaar limits, counted from Hypixel's own chat lines:
+ * <ul>
+ *   <li>coins put into new buy orders ("Buy Order Setup!")</li>
+ *   <li>value of new sell offers ("Sell Offer Setup!", "Order Flipped!")</li>
+ * </ul>
+ * Hypixel counts every created order, so a cancelled and re-listed offer counts again;
+ * subtracting cancels made the tracker show 0.76B when Hypixel already said "limit reached".
+ * Hypixel's own "You reached the daily limit ..." line marks a limit as reached.
+ * The day rolls over at 00:00 UTC (01:00 Europe/Berlin in winter).
  */
 public final class BazaarDailyLimit {
-    public static final long LIMIT_COINS = 9_500_000_000L;
-    private static final ZoneId ZONE = ZoneId.of("Europe/Berlin");
+    public static final long LIMIT_COINS = 10_000_000_000L;
+    /** Stop a little early: an order that crosses the limit is refused anyway. */
+    private static final long SAFETY_COINS = 100_000_000L;
     private static final Gson GSON = new GsonBuilder().setPrettyPrinting().create();
     private static boolean loaded;
     private static String tradeDay;
-    private static long sold;
+    private static long buyCoins;
+    private static long sellCoins;
+    private static boolean buyReached;
+    private static boolean sellReached;
     private static long resetAt;
 
     private BazaarDailyLimit() {
@@ -33,7 +43,7 @@ public final class BazaarDailyLimit {
     }
 
     private static String currentTradeDay() {
-        return LocalDateTime.now(ZONE).minusHours(2).toLocalDate().toString();
+        return LocalDate.now(ZoneOffset.UTC).toString();
     }
 
     private static void ensureLoaded() {
@@ -47,7 +57,10 @@ public final class BazaarDailyLimit {
                 Data data = GSON.fromJson(Files.readString(path), Data.class);
                 if (data != null) {
                     tradeDay = data.day;
-                    sold = Math.max(0L, data.sold);
+                    buyCoins = Math.max(0L, data.buy);
+                    sellCoins = Math.max(0L, data.sold);
+                    buyReached = data.buyReached;
+                    sellReached = data.sellReached;
                     resetAt = data.resetAt;
                 }
             }
@@ -61,49 +74,69 @@ public final class BazaarDailyLimit {
         String today = currentTradeDay();
         if (!today.equals(tradeDay)) {
             tradeDay = today;
-            sold = 0L;
+            buyCoins = 0L;
+            sellCoins = 0L;
+            buyReached = false;
+            sellReached = false;
             resetAt = System.currentTimeMillis();
             save();
         }
     }
 
+    /** Every Bazaar chat event: the source of truth for both counters. */
+    static synchronized void onEvent(BazaarChatEvent event) {
+        if (event == null) {
+            return;
+        }
+        ensureLoaded();
+        rollIfNeeded();
+        switch (event.type) {
+            case BUY_SETUP -> buyCoins += Math.max(0L, Math.round(event.price));
+            case SELL_SETUP, FLIPPED -> sellCoins += Math.max(0L, Math.round(event.price));
+            case DAILY_BUY_LIMIT -> {
+                buyReached = true;
+                System.out.println("[BazaarLimit] Hypixel: buy order limit reached (tracked "
+                        + buyCoins + ")");
+            }
+            case DAILY_SELL_LIMIT -> {
+                sellReached = true;
+                System.out.println("[BazaarLimit] Hypixel: sell limit reached (tracked "
+                        + sellCoins + ")");
+            }
+            default -> {
+                return;
+            }
+        }
+        save();
+    }
+
+    public static synchronized long buyCoins() {
+        ensureLoaded();
+        rollIfNeeded();
+        return buyCoins;
+    }
+
     public static synchronized long sold() {
         ensureLoaded();
         rollIfNeeded();
-        return sold;
+        return sellCoins;
     }
 
-    public static synchronized long remaining() {
+    public static synchronized boolean buyLimitReached() {
         ensureLoaded();
         rollIfNeeded();
-        return Math.max(0L, LIMIT_COINS - sold);
+        return buyReached || buyCoins >= LIMIT_COINS - SAFETY_COINS;
     }
 
+    public static synchronized boolean sellLimitReached() {
+        ensureLoaded();
+        rollIfNeeded();
+        return sellReached || sellCoins >= LIMIT_COINS - SAFETY_COINS;
+    }
+
+    /** No new buy orders: either they are refused, or what they buy could not be listed today. */
     public static synchronized boolean reached() {
-        ensureLoaded();
-        rollIfNeeded();
-        return sold >= LIMIT_COINS;
-    }
-
-    public static synchronized void addSale(long coins) {
-        if (coins <= 0) {
-            return;
-        }
-        ensureLoaded();
-        rollIfNeeded();
-        sold = Math.min(LIMIT_COINS, sold + coins);
-        save();
-    }
-
-    /** A cancelled sell offer sold nothing: it no longer counts. */
-    public static synchronized void removeSale(long coins) {
-        if (coins <= 0) {
-            return;
-        }
-        ensureLoaded();
-        rollIfNeeded();
-        sold = Math.max(0L, sold - coins);
-        save();
+        return buyLimitReached() || sellLimitReached();
     }
 
     public static synchronized String tradeDay() {
@@ -118,13 +151,24 @@ public final class BazaarDailyLimit {
         return resetAt;
     }
 
+    /** Short status for chat and panels, e.g. "Buy 2.1B/10B · Sell 3.4B/10B". */
+    public static String summary() {
+        return "Buy " + ScreenUtil.formatCoins(buyCoins()) + (buyLimitReached() ? " (max)" : "")
+                + "/" + ScreenUtil.formatCoins(LIMIT_COINS)
+                + " · Sell " + ScreenUtil.formatCoins(sold()) + (sellLimitReached() ? " (max)" : "")
+                + "/" + ScreenUtil.formatCoins(LIMIT_COINS);
+    }
+
     private static void save() {
         try {
             Path path = file();
             Files.createDirectories(path.getParent());
             Data data = new Data();
             data.day = tradeDay;
-            data.sold = sold;
+            data.buy = buyCoins;
+            data.sold = sellCoins;
+            data.buyReached = buyReached;
+            data.sellReached = sellReached;
             data.resetAt = resetAt;
             Path temp = path.resolveSibling(path.getFileName() + ".tmp");
             Files.writeString(temp, GSON.toJson(data), StandardCharsets.UTF_8);
@@ -143,7 +187,10 @@ public final class BazaarDailyLimit {
 
     private static final class Data {
         String day;
+        long buy;
         long sold;
+        boolean buyReached;
+        boolean sellReached;
         long resetAt;
     }
 }

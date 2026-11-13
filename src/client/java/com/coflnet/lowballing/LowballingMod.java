@@ -610,9 +610,13 @@ public final class LowballingMod {
             LowballingChat.clearVisitor();
         }
         setWarpPosition();
-        sendChat("/hub");
+        if (com.coflnet.utils.SkyblockLocation.isInHub()) {
+            debug("Sequenz: bereits im Hub - kein /hub");
+        } else {
+            sendChat("/hub");
+            debug("Sequenz: /hub");
+        }
         actionAt = stateAt;
-        debug("Sequenz: /hub");
     }
 
     private static void enterFindSelector() {
@@ -743,8 +747,12 @@ public final class LowballingMod {
         actionAt = stateAt;
         warpWatchAt = stateAt;
         setWarpPosition();
-        sendChat("/is");
-        debug("Besucher erkannt - /is");
+        if (com.coflnet.utils.SkyblockLocation.isOnIsland()) {
+            debug("Besucher erkannt - bereits auf der Insel");
+        } else {
+            sendChat("/is");
+            debug("Besucher erkannt - /is");
+        }
     }
 
     private static void enterIslandScan() {
@@ -1165,6 +1173,12 @@ public final class LowballingMod {
     }
 
     private static void tickGoHub(Minecraft client, long now) {
+        if (com.coflnet.utils.SkyblockLocation.isInHub()) {
+            debug("Bereits im Hub");
+            hubArrivedAt = now;
+            enterFindSelector();
+            return;
+        }
         if (LowballingChat.consumeAlreadyHere(warpWatchAt)) {
             hubArrivedAt = now;
             enterFindSelector();
@@ -1445,7 +1459,8 @@ public final class LowballingMod {
 
     private static void tickReturnIsland(Minecraft client, long now) {
         if (levelArrivedAfter(stateAt, now)
-                || LowballingChat.consumeAlreadyHere(warpWatchAt)) {
+                || LowballingChat.consumeAlreadyHere(warpWatchAt)
+                || com.coflnet.utils.SkyblockLocation.isOnIsland()) {
             enterIslandScan();
             return;
         }

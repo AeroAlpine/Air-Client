@@ -60,8 +60,7 @@ public final class BazaarPanel extends FlipperPanel {
         int open = Math.min(Trader.scannedOrderCount(),
                 Math.max(0, FlipperMod.CONFIG.maxOrders));
         return "Orders " + open + "/" + FlipperMod.CONFIG.maxOrders
-                + " \u00b7 Limit " + ScreenUtil.formatCoins(BazaarDailyLimit.sold())
-                + "/" + ScreenUtil.formatCoins(BazaarDailyLimit.LIMIT_COINS)
+                + " \u00b7 " + BazaarDailyLimit.summary()
                 + " \u00b7 +" + ScreenUtil.formatCoins(
                 ProfitTracker.display(ProfitTracker.BAZAAR));
     }

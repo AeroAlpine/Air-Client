@@ -125,6 +125,17 @@ public final class ServerRestartHandler {
             advance(client, now);
             return;
         }
+        // A warp to where we already are only teleports (no world change), so it never
+        // looked like success and was resent for a whole minute. Check the place first.
+        boolean alreadyThere = phase == Phase.HUB
+                ? com.coflnet.utils.SkyblockLocation.isInHub()
+                : com.coflnet.utils.SkyblockLocation.isOnIsland();
+        if (alreadyThere) {
+            System.out.println("[Restart] Already at target for " + phase + " ("
+                    + com.coflnet.utils.SkyblockLocation.describe() + ")");
+            advance(client, now);
+            return;
+        }
         if (now < nextCommandAt) {
             return;
         }

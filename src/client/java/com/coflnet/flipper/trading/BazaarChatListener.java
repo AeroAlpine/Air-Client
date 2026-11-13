@@ -54,6 +54,7 @@ public class BazaarChatListener {
                 if (event != null) {
                     ProfitTracker.onBazaarEvent(event);
                     BazaarLimits.onEvent(event);
+                    BazaarDailyLimit.onEvent(event);
                     Trader trader = Trader.get();
                     if (trader != null) {
                         trader.onChatEvent(event);

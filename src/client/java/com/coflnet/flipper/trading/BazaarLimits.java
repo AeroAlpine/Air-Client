@@ -109,26 +109,37 @@ public final class BazaarLimits {
         return excluded;
     }
 
-    /** Listed by display name ("Enchanted Diamond") or product id ("ENCHANTED_DIAMOND"). */
+    /**
+     * Listed by display name ("Enchanted Diamond"), product id ("ENCHANTED_DIAMOND") or part of
+     * the name ("onyx" = every Onyx gemstone). Symbols do not count: the Bazaar calls it
+     * "☠ Perfect Onyx Gemstone", and "perfect onyx gemstone" never matched, so item mode flipped nothing.
+     */
     static boolean allowed(List<String> items, String productId, String displayName) {
         String id = normalize(productId);
         String name = normalize(displayName);
+        Set<String> nameWords = new HashSet<>(List.of(name.split(" ")));
         for (String entry : items) {
             String wanted = normalize(entry);
             if (wanted.isEmpty()) {
                 continue;
             }
-            if (wanted.equals(name) || wanted.equals(id) || wanted.replace(' ', '_').equals(id)) {
+            if (wanted.equals(name) || wanted.equals(id.replace('_', ' '))) {
+                return true;
+            }
+            if (nameWords.containsAll(List.of(wanted.split(" ")))) {
                 return true;
             }
         }
         return false;
     }
 
+    /** Lower case letters, digits and single spaces only. */
     private static String normalize(String value) {
         if (value == null) {
             return "";
         }
-        return value.replaceAll("(?i)§[0-9A-FK-OR]", "").trim().toLowerCase(Locale.ROOT);
+        return value.replaceAll("(?i)§[0-9A-FK-OR]", "").replace('_', ' ')
+                .replaceAll("[^\\p{L}\\p{N} ]", " ").trim().replaceAll("\\s+", " ")
+                .toLowerCase(Locale.ROOT);
     }
 }

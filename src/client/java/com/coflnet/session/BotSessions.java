@@ -235,6 +235,9 @@ public final class BotSessions {
         if (bot != Bot.LOWBALL && LowballingMod.isRunning()) {
             return; // the lowballer still works and decides where it stands
         }
+        if (com.coflnet.utils.SkyblockLocation.isOnIsland()) {
+            return; // /is on the island only teleports
+        }
         lastIslandAt = now;
         client.getConnection().sendChat("/is");
     }
