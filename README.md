@@ -17,7 +17,6 @@ While the Bazaar flipper, AH flipper, bid macro, or lowballer is active, switchi
 
 ![Menu screen](docs/readme/menu.png)
 ![Settings screen](docs/readme/settings.png)
-![Landing screen](docs/readme/landing.png)
 
 Licensed under the [GNU Affero General Public License v3.0 (AGPL-3.0-only)](LICENSE).
 See [NOTICE](NOTICE) for copyright and [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md)
