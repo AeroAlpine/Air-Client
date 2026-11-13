@@ -3,7 +3,7 @@ package com.coflnet.flipper.trading;
 public class BazaarChatEvent {
     public enum Type {
         BUY_SETUP, SELL_SETUP, BUY_FILLED, SELL_FILLED, FLIPPED, CLAIMED_COINS, CLAIMED_ITEMS,
-        CANCELLED, EXPIRED, ORDER_LIMIT, INVENTORY_FULL, OTHER
+        CANCELLED, EXPIRED, ORDER_LIMIT, INVENTORY_FULL, DAILY_BUY_LIMIT, DAILY_SELL_LIMIT, OTHER
     }
 
     /** Which kind of order a cancel/expire line is about. */
@@ -34,6 +34,14 @@ public class BazaarChatEvent {
             }
             event.side = stripped.contains("Sell Offer") ? Side.SELL
                     : stripped.contains("Buy Order") ? Side.BUY : Side.UNKNOWN;
+            // "You reached the daily limit of coins you may create orders for on the Bazaar!"
+            // "You reached the daily limit in items value that you may sell on the bazaar!"
+            String lowerLine = stripped.toLowerCase();
+            if (lowerLine.contains("daily limit")) {
+                event.type = lowerLine.contains("create orders") ? Type.DAILY_BUY_LIMIT
+                        : lowerLine.contains("sell") ? Type.DAILY_SELL_LIMIT : Type.DAILY_BUY_LIMIT;
+                return event;
+            }
             if (stripped.contains("Buy Order Setup!")) {
                 event.type = Type.BUY_SETUP;
                 parseSetup(event, stripped);
@@ -111,7 +119,9 @@ public class BazaarChatEvent {
 
     private static BazaarChatEvent parseWithoutPrefix(BazaarChatEvent event, String stripped) {
         String lower = stripped.toLowerCase();
-        if (lower.contains("inventory") && (lower.contains("full") || lower.contains("space"))) {
+        // "One or more items didn't fit in your inventory and were added to your item stash!"
+        if ((lower.contains("inventory") && (lower.contains("full") || lower.contains("space")
+                || lower.contains("didn't fit"))) || lower.contains("added to your item stash")) {
             event.type = Type.INVENTORY_FULL;
             return event;
         }

@@ -71,6 +71,12 @@ public class Trader {
     private volatile boolean ordersBusy;
     private volatile boolean recentFillChat;
     private volatile boolean orderLimitReached;
+    /** Hypixel said the inventory is full (or items went to the stash). */
+    private volatile long inventoryFullAt;
+    private volatile boolean stashPending;
+    private int inventoryClearPasses;
+    private long inventoryClearBlockedUntil;
+    private long lastInventoryLogAt;
     private volatile boolean lastFailureItemSpecific;
     private volatile int lastScannedOrderCount;
     private volatile long lastDailyLimitLogAt;
@@ -592,6 +598,10 @@ public class Trader {
         log("Zyklus: Purse=" + purse + " Bankroll=" + (purse - cfg.reserveCoins)
                 + " offeneOrders=" + lastScannedOrderCount
                 + " (Ledger: " + ledger.openOrderCount() + ")");
+        if (clearFullInventory(data)) {
+            cleanupGui();
+            return;
+        }
         boolean ordersBusy = prioritizeExistingOrders(data);
         beat();
         if (stopRequested) {
@@ -1297,9 +1307,9 @@ public class Trader {
             long now = System.currentTimeMillis();
             if (now - lastDailyLimitLogAt > 60_000L) {
                 lastDailyLimitLogAt = now;
-                chat("\u00a76[Flipper] \u00a7cDaily sell limit reached ("
-                        + ScreenUtil.formatCoins(BazaarDailyLimit.LIMIT_COINS)
-                        + "). No new buy orders until 02:00 Europe/Berlin.");
+                chat("\u00a76[Flipper] \u00a7cDaily Bazaar limit reached \u00a77("
+                        + BazaarDailyLimit.summary()
+                        + "). No new buy orders until 00:00 UTC.");
             }
             return false;
         }
@@ -2059,7 +2069,6 @@ public class Trader {
                         trade.sellPrice = targetSell;
                         trade.revenue = trade.qty * targetSell * (1.0 - cfg.taxPercent / 100.0);
                         trade.state = Trade.State.SELL_OPEN;
-                        BazaarDailyLimit.addSale(Math.round(trade.qty * targetSell));
                         trade.listedAt = System.currentTimeMillis();
                         ledger.update(trade);
                         chat("\u00a76[Flipper] \u00a7aSell offer created (flip): \u00a7f" + order.itemName + " \u00a77@ \u00a7f" + ScreenUtil.formatPrice(targetSell));
@@ -2450,10 +2459,7 @@ public class Trader {
             cancelled = waitForCancelled(3000);
         }
         if (cancelled) {
-            // What was not sold does not count towards the daily limit. Every
-            // repricing counted the full value again before.
-            BazaarDailyLimit.removeSale(Math.round(
-                    Math.max(0, trade.qty - trade.filledQty) * trade.sellPrice));
+            // Hypixel keeps a cancelled offer on the daily limit, so it is not subtracted.
             trade.state = Trade.State.CLAIMED;
             ledger.update(trade);
             chat("\u00a76[Flipper] \u00a77Sell offer cancelled for repricing: \u00a7f" + trade.displayName);
@@ -2596,12 +2602,160 @@ public class Trader {
         trade.sellPrice = targetSell;
         trade.revenue = trade.qty * targetSell * (1.0 - cfg.taxPercent / 100.0);
         trade.state = Trade.State.SELL_OPEN;
-        BazaarDailyLimit.addSale(Math.round(trade.qty * targetSell));
         trade.listedAt = System.currentTimeMillis();
         ledger.update(trade);
         chat("\u00a76[Flipper] \u00a7aSell offer created: \u00a7f" + trade.qty + "x " + trade.displayName + " \u00a77@ \u00a7f" + ScreenUtil.formatPrice(targetSell));
         cleanupGui();
         return true;
+    }
+
+    /**
+     * Inventory full (Hypixel said so, or at most one free slot): everything else waits.
+     * Every Bazaar item in the inventory gets a sell offer, then the item stash is picked up
+     * so its items can be listed in the next cycle. A claimed order that did not fit used to
+     * leave the flipper stuck for half an hour with "Item nicht gefunden".
+     */
+    private boolean clearFullInventory(MarketData data) {
+        long now = System.currentTimeMillis();
+        boolean signal = inventoryFullAt > 0 && now - inventoryFullAt < 15 * 60_000L;
+        int free = ScreenUtil.freeInventorySlots();
+        if ((!signal && free > 1) || now < inventoryClearBlockedUntil || data == null) {
+            if (!signal && free > 1) {
+                inventoryClearPasses = 0;
+            }
+            return false;
+        }
+        if (BazaarDailyLimit.sellLimitReached()) {
+            logInventory("Inventar voll, aber Sell-Tageslimit erreicht - kann nichts einstellen");
+            inventoryClearBlockedUntil = now + 10 * 60_000L;
+            return false;
+        }
+        if (inventoryClearPasses >= 3) {
+            chat("\u00a76[Flipper] \u00a7cInventory still full after 3 tries \u00a77- back to normal flipping for 10 min.");
+            inventoryClearPasses = 0;
+            inventoryFullAt = 0;
+            inventoryClearBlockedUntil = now + 10 * 60_000L;
+            return false;
+        }
+        List<Trade> items = bazaarItemsInInventory(data);
+        if (items.isEmpty()) {
+            if (stashPending) {
+                pickupStash();
+                return true;
+            }
+            logInventory("Inventar voll, aber keine Bazaar-Items darin (frei: " + free + ")");
+            inventoryFullAt = 0;
+            inventoryClearBlockedUntil = now + 5 * 60_000L;
+            return false;
+        }
+        inventoryClearPasses++;
+        chat("\u00a76[Flipper] \u00a7eInventory full \u00a77- selling " + items.size()
+                + " Bazaar item(s) from the inventory first");
+        int listed = 0;
+        for (Trade trade : items) {
+            checkStop();
+            if (isAhPriority()) {
+                return true;
+            }
+            if (createSellOfferFromInventory(trade, data)) {
+                listed++;
+            }
+        }
+        if (stashPending) {
+            pickupStash();
+        } else if (ScreenUtil.freeInventorySlots() > 1) {
+            inventoryFullAt = 0;
+        }
+        if (listed == items.size()) {
+            inventoryClearPasses = 0;
+        }
+        return true;
+    }
+
+    private void logInventory(String text) {
+        long now = System.currentTimeMillis();
+        if (now - lastInventoryLogAt > 60_000L) {
+            lastInventoryLogAt = now;
+            log(text);
+        }
+    }
+
+    /** Items that did not fit went to Hypixel's item stash: fetch them to sell them too. */
+    private void pickupStash() {
+        stashPending = false;
+        cleanupGui();
+        log("Hole Item-Stash ab (/pickupstash)");
+        sendCommand("pickupstash");
+        sleepOrStop(1500);
+        inventoryFullAt = System.currentTimeMillis();
+    }
+
+    /** Every Bazaar product in the player inventory, as trades ready for a sell offer. */
+    private List<Trade> bazaarItemsInInventory(MarketData data) {
+        Map<String, Long> counts = ScreenUtil.sync(() -> {
+            Map<String, Long> found = new java.util.LinkedHashMap<>();
+            net.minecraft.client.Minecraft client = net.minecraft.client.Minecraft.getInstance();
+            if (client.player == null) {
+                return found;
+            }
+            for (int i = 0; i < 36; i++) {
+                net.minecraft.world.item.ItemStack stack = client.player.getInventory().getItem(i);
+                String id = bazaarProductId(stack, data);
+                if (id != null) {
+                    found.merge(id, (long) stack.getCount(), Long::sum);
+                }
+            }
+            return found;
+        });
+        List<Trade> result = new ArrayList<>();
+        if (counts == null) {
+            return result;
+        }
+        long now = System.currentTimeMillis();
+        for (Map.Entry<String, Long> entry : counts.entrySet()) {
+            MarketData.Product product = data.products.get(entry.getKey());
+            if (product == null || product.bestAsk <= 0) {
+                continue;
+            }
+            String name = ItemNames.displayName(entry.getKey());
+            Trade trade = ledger.firstMatching(name, Trade.State.FILLED, Trade.State.CLAIMED);
+            if (trade == null) {
+                trade = new Trade();
+                trade.productId = entry.getKey();
+                trade.displayName = name;
+                trade.buyPrice = product.bestBid;
+                trade.state = Trade.State.CLAIMED;
+                trade.createdAt = now;
+                trade.qty = entry.getValue();
+                trade.cost = trade.qty * trade.buyPrice;
+                ledger.add(trade);
+            } else {
+                trade.qty = entry.getValue();
+            }
+            trade.sellPrice = product.bestAsk;
+            result.add(trade);
+        }
+        return result;
+    }
+
+    /** SkyBlock id of the stack if the Bazaar trades it (enchanted books by their enchant). */
+    private static String bazaarProductId(net.minecraft.world.item.ItemStack stack, MarketData data) {
+        if (stack == null || stack.isEmpty()) {
+            return null;
+        }
+        String tag = com.coflnet.ahflipper.AhItem.fromStack(stack).tag;
+        if (tag != null && !tag.isBlank() && data.products.containsKey(tag)) {
+            return tag;
+        }
+        String name = ScreenUtil.cleanName(stack.getHoverName().getString());
+        if ("ENCHANTED_BOOK".equals(tag)) {
+            var lore = stack.get(net.minecraft.core.component.DataComponents.LORE);
+            if (lore != null && !lore.lines().isEmpty()) {
+                name = ScreenUtil.cleanName(lore.lines().getFirst().getString());
+            }
+        }
+        String byName = ItemNames.productId(name);
+        return byName != null && data.products.containsKey(byName) ? byName : null;
     }
 
     private void maybeReconcile() {
@@ -2805,6 +2959,13 @@ public class Trader {
                             chat("\u00a76[Flipper] \u00a7cBuy order cancelled: \u00a7f" + trade.displayName);
                         }
                     }
+                }
+                case INVENTORY_FULL -> {
+                    inventoryFullAt = System.currentTimeMillis();
+                    if (event.raw != null && event.raw.toLowerCase().contains("stash")) {
+                        stashPending = true;
+                    }
+                    log("Inventar voll laut Chat: " + event.raw);
                 }
                 case ORDER_LIMIT -> {
                     orderLimitReached = true;

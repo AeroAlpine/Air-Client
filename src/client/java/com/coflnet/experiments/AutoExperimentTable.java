@@ -139,6 +139,14 @@ public final class AutoExperimentTable {
     private static final List<String> playColors = new ArrayList<>();
     private static int inputIndex;
     private static long chronoInputSince;
+    /** Ticks in a row without a lit note; a short blink must not count as a second note. */
+    private static int chronoDarkTicks;
+    private static long chronoGameStart;
+    private static String chronoDiag = "";
+    private static final int CHRONO_GAP_TICKS = 2;
+    private static final List<String> COLOR_PREFIXES = List.of(
+            "light_blue_", "light_gray_", "white_", "orange_", "magenta_", "yellow_", "lime_", "pink_",
+            "gray_", "cyan_", "purple_", "blue_", "brown_", "green_", "red_", "black_");
     private static int completedRounds;
 
     // Superpairs
@@ -566,6 +574,9 @@ public final class AutoExperimentTable {
         firstSlot = -1;
         firstKey = null;
         plannedSecond = -1;
+        chronoDarkTicks = 0;
+        chronoGameStart = now;
+        chronoDiag = "";
         setStage(Stage.GAME, now);
     }
 
@@ -603,6 +614,8 @@ public final class AutoExperimentTable {
 
     private static void tickChronomatron(long now) {
         Phase phase = phase();
+        String lit = litColor();
+        logChronoState(now, phase, lit);
         if (phase == Phase.SHOW) {
             if (lastPhase != Phase.SHOW) {
                 if (roundFinished()) {
@@ -610,12 +623,19 @@ public final class AutoExperimentTable {
                 }
                 recordedColors.clear();
                 lastLitColor = null;
+                chronoDarkTicks = CHRONO_GAP_TICKS;
+                logChronoBoard(now);
             }
-            String lit = litColor();
-            if (lit != null && !lit.equals(lastLitColor)) {
-                recordedColors.add(lit);
+            if (lit == null) {
+                chronoDarkTicks++;
+            } else {
+                // A new note: another colour, or the same one after a real dark gap.
+                if (!lit.equals(lastLitColor) || chronoDarkTicks >= CHRONO_GAP_TICKS) {
+                    recordedColors.add(lit);
+                }
+                lastLitColor = lit;
+                chronoDarkTicks = 0;
             }
-            lastLitColor = lit;
             lastPhase = Phase.SHOW;
             return;
         }
@@ -626,7 +646,12 @@ public final class AutoExperimentTable {
             // Simon says: the sequence we already played plus the note shown last.
             // Only the newest note has to be read right; missed or doubled earlier notes do not matter.
             log("Chronomatron gesehen: " + recordedColors);
-            if (!recordedColors.isEmpty()) {
+            int expected = playColors.size() + 1;
+            if (recordedColors.size() == expected) {
+                // Whole replay seen with the right length: trust it over our own history.
+                playColors.clear();
+                playColors.addAll(recordedColors);
+            } else if (!recordedColors.isEmpty()) {
                 playColors.add(recordedColors.getLast());
             } else {
                 log("Chronomatron: keine neue Note erkannt");
@@ -641,7 +666,7 @@ public final class AutoExperimentTable {
         }
         // Wait until the last note went dark again: else the click may be lost, and the
         // fading note would look like the reaction to our click.
-        if (litColor() != null && now - Math.max(lastClickAt, chronoInputSince) < 2_000) {
+        if (lit != null && now - Math.max(lastClickAt, chronoInputSince) < 2_000) {
             return;
         }
         int slot = slotForColor(playColors.get(inputIndex));
@@ -955,26 +980,92 @@ public final class AutoExperimentTable {
         return Phase.UNKNOWN;
     }
 
-    /** The colour whose glass block currently shows as a different block. */
+    /**
+     * The colour whose blocks currently look different from the rest of the board.
+     * The resting look is whatever most note blocks share (colour stripped from the item id),
+     * so it works whichever block Hypixel uses for a lit note.
+     */
     private static String litColor() {
         int end = Math.min(45, size());
+        Map<String, Integer> looks = new HashMap<>();
+        List<Integer> notes = new ArrayList<>();
         for (int i = 9; i < end; i++) {
             ItemStack stack = stackAt(i);
-            if (stack.isEmpty()) {
+            if (stack.isEmpty() || itemId(stack).contains("pane")
+                    || clean(stack.getHoverName().getString()).isBlank()) {
                 continue;
             }
-            String id = itemId(stack);
-            if (id.contains("pane")) {
-                continue;
+            notes.add(i);
+            looks.merge(look(stack), 1, Integer::sum);
+        }
+        if (looks.size() < 2) {
+            return null;
+        }
+        String resting = null;
+        int best = -1;
+        for (Map.Entry<String, Integer> entry : looks.entrySet()) {
+            int count = entry.getValue();
+            boolean better = count > best
+                    || (count == best && entry.getKey().contains("glass") && !resting.contains("glass"));
+            if (better) {
+                resting = entry.getKey();
+                best = count;
             }
-            if (!id.contains("glass") || stack.hasFoil()) {
-                String name = clean(stack.getHoverName().getString());
-                if (!name.isBlank()) {
-                    return name;
-                }
+        }
+        for (int slot : notes) {
+            ItemStack stack = stackAt(slot);
+            if (!look(stack).equals(resting)) {
+                return clean(stack.getHoverName().getString());
             }
         }
         return null;
+    }
+
+    /** Item id without its colour plus the glint, e.g. "stained_glass" or "terracotta*". */
+    private static String look(ItemStack stack) {
+        String path = itemId(stack);
+        path = path.substring(path.indexOf(':') + 1);
+        for (String prefix : COLOR_PREFIXES) {
+            if (path.startsWith(prefix)) {
+                path = path.substring(prefix.length());
+                break;
+            }
+        }
+        return stack.hasFoil() ? path + "*" : path;
+    }
+
+    /** Compact Chronomatron trace for the log: phase, indicator, lit note, top-middle item. */
+    private static void logChronoState(long now, Phase phase, String lit) {
+        String indicator = "";
+        for (int i = size() - 1; i >= 0; i--) {
+            ItemStack stack = stackAt(i);
+            String id = itemId(stack);
+            if (id.endsWith("glowstone") || id.endsWith("clock")) {
+                indicator = clean(stack.getHoverName().getString()) + " x" + stack.getCount();
+                break;
+            }
+        }
+        ItemStack top = stackAt(4);
+        String state = phase + " | " + indicator + " | lit=" + lit + " | top="
+                + (top.isEmpty() ? "-" : clean(top.getHoverName().getString()) + " x" + top.getCount());
+        if (!state.equals(chronoDiag)) {
+            chronoDiag = state;
+            log("Chrono +" + (now - chronoGameStart) + "ms " + state);
+        }
+    }
+
+    private static void logChronoBoard(long now) {
+        StringBuilder sb = new StringBuilder();
+        int end = Math.min(45, size());
+        for (int i = 9; i < end; i++) {
+            ItemStack stack = stackAt(i);
+            if (stack.isEmpty() || itemId(stack).contains("pane")) {
+                continue;
+            }
+            sb.append(i).append('=').append(clean(stack.getHoverName().getString())).append('/')
+                    .append(look(stack)).append(' ');
+        }
+        log("Chrono Feld +" + (now - chronoGameStart) + "ms: " + sb.toString().trim());
     }
 
     private static int slotForColor(String color) {
@@ -986,7 +1077,7 @@ public final class AutoExperimentTable {
                 continue;
             }
             if (clean(stack.getHoverName().getString()).equalsIgnoreCase(color)) {
-                if (itemId(stack).contains("glass")) {
+                if (!clean(stack.getHoverName().getString()).equalsIgnoreCase(litColor() == null ? "" : litColor())) {
                     return i;
                 }
                 if (fallback < 0) {

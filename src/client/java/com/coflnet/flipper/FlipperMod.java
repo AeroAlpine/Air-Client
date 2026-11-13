@@ -184,10 +184,8 @@ public class FlipperMod {
         }
         message("\u00a77Open orders: \u00a7f" + ledger.openOrderCount() + "\u00a77/\u00a7f" + CONFIG.maxOrders
                 + " \u00a77\u00b7 Blacklisted: \u00a7f" + trader.blacklistCount());
-        message("\u00a77Daily sell limit: \u00a7f"
-                + ScreenUtil.formatCoins(BazaarDailyLimit.sold()) + "\u00a77/\u00a7f"
-                + ScreenUtil.formatCoins(BazaarDailyLimit.LIMIT_COINS)
-                + " \u00a77(resets 02:00 Europe/Berlin)");
+        message("\u00a77Daily limits: \u00a7f" + BazaarDailyLimit.summary()
+                + " \u00a77(resets 00:00 UTC)");
         message("\u00a77Realized profit: \u00a7f" + ScreenUtil.formatCoins(ledger.realizedProfit()));
         return 1;
     }
