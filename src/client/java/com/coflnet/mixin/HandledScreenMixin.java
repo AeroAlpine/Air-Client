@@ -91,7 +91,8 @@ public abstract class HandledScreenMixin extends Screen {
     }
 
     protected void updateText(DescriptionHandler.DescModification[] lines) {
-        if(lines == null || lines.length == 0) {
+        // Cofl's info box next to menus is not shown any more.
+        if (true) {
             sideTextWidget = null;
             // Keep list non-null; reset to empty
             interactiveTextLines = java.util.Collections.emptyList();

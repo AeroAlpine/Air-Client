@@ -119,6 +119,8 @@ public class VoicechatClient implements ClientModInitializer {
                 "key.voicechat.hud_editor", GLFW.GLFW_KEY_G, CLIENT_CATEGORY));
         zoomKey = registerZoomKey();
         killauraKey = registerKillAura();
+        pingplus.voicechat.client.FollowFeature.setToggleKey(KeyMappingHelper.registerKeyMapping(new KeyMapping(
+                "key.voicechat.combat", GLFW.GLFW_KEY_UNKNOWN, CLIENT_CATEGORY)));
         shoulderCamKey = registerShoulderCamKey();
         HandSwapFeature handSwap = new HandSwapFeature();
 
@@ -219,6 +221,10 @@ public class VoicechatClient implements ClientModInitializer {
             AutoToolsFeature.tick(client);
             StorageEspFeature.tick(client);
             KillAuraFeature.tick(client);
+            var combatKey = pingplus.voicechat.client.FollowFeature.toggleKey();
+            while (combatKey != null && combatKey.consumeClick()) {
+                pingplus.voicechat.client.FollowFeature.toggle();
+            }
             pingplus.voicechat.client.FollowFeature.tick(client);
             while (killauraKey != null && killauraKey.consumeClick()) {
                 PlayerSettings.killAura = !PlayerSettings.killAura;

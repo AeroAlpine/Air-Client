@@ -53,6 +53,9 @@ public final class LowballingAiTest {
         checkPrice("5min", 0);
         checkPrice("i have 3 items", 0);
         checkPrice("2 pets", 0);
+        checkPriceAt("how did u make 1bil at lvl 50", 200 * M, 0);
+        checkPriceAt("last guy bid 600", 200 * M, 600 * M);
+        checkPriceAt("someone offered 300", 200 * M, 300 * M);
 
         LowballingAiDecision accept = decide(context(LowballingAiStage.CHAT_OFFER,
                 true, "seller", "i do for 9m", 0, 0, 0, false, false, false, 0));
@@ -98,6 +101,17 @@ public final class LowballingAiTest {
         checkIntent("./ah mavrin", LowballingChatIntent.AH_OFFER);
         checkIntent("its on ah", LowballingChatIntent.AH_OFFER);
         checkIntent("my items are on ah", LowballingChatIntent.AH_OFFER);
+        checkIntent("wati", LowballingChatIntent.WAIT);
+        checkIntent("eat my ****", LowballingChatIntent.INSULT);
+        checkIntent("how much would you pay for the boots on myah",
+                LowballingChatIntent.AH_OFFER);
+        checkIntent("how did u make 1bil at lvl 50",
+                LowballingChatIntent.WEALTH_QUESTION);
+        checkIntent("how does bro have a bil", LowballingChatIntent.WEALTH_QUESTION);
+        checkIntent("the final destination im wearing",
+                LowballingChatIntent.ITEM_MENTION);
+        checkIntent("selling my hat", LowballingChatIntent.ITEM_MENTION);
+        checkIntent("i have a hyperion", LowballingChatIntent.ITEM_MENTION);
         checkIntent("on ah for 20m", LowballingChatIntent.VALUE_CLAIM);
         LowballingChatIntent ahNoise = LowballingChatClassifier.classify("ah ok", 10 * M).intent();
         check(ahNoise != LowballingChatIntent.AH_OFFER, "ah ok is no ah request");
@@ -133,6 +147,46 @@ public final class LowballingAiTest {
         check(ahPrice.action() == LowballingAiDecision.Action.SECOND_TRADE
                         && ahPrice.price() == 10 * M,
                 "direct price after ah still trades: " + ahPrice);
+
+        LowballingAiDecision wealth = decide(context(LowballingAiStage.FIRST_TRADE,
+                true, "seller", "how did u make 1bil at lvl 50", 0, 0, 0,
+                false, false, false, 0, false));
+        check(wealth.action() == LowballingAiDecision.Action.REPLY_ONLY
+                        && wealth.reply() != null,
+                "wealth question gets a friendly redirect: " + wealth);
+
+        LowballingAiDecision itemMention = decide(context(LowballingAiStage.FIRST_TRADE,
+                true, "seller", "selling my hat", 0, 0, 0, false, false, false, 0, false));
+        check(itemMention.action() == LowballingAiDecision.Action.REPLY_ONLY
+                        && itemMention.reply() != null,
+                "item mention asks for a trade: " + itemMention);
+
+        LowballingAiDecision wati = decide(context(LowballingAiStage.CHAT_OFFER,
+                true, "seller", "wati", 0, 0, 0, false, false, false, 0, false));
+        check(wati.action() == LowballingAiDecision.Action.WAIT,
+                "wati is wait: " + wati);
+
+        LowballingAiDecision eatMy = decide(context(LowballingAiStage.CHAT_OFFER,
+                true, "seller", "eat my ****", 0, 0, 0, false, false, false, 0, false));
+        check(eatMy.action() == LowballingAiDecision.Action.KICK,
+                "censored insult kicks: " + eatMy);
+
+        LowballingAiDecision insultPrice = decide(context(LowballingAiStage.CHAT_OFFER,
+                true, "seller", "you idiot 80m", 0, 0, 0, false, false, false, 0, false));
+        check(insultPrice.action() == LowballingAiDecision.Action.KICK,
+                "insult with a price kicks: " + insultPrice);
+
+        LowballingAiDecision scam = decide(customContext(
+                "nah thats a scam making 80m profit lol", 200 * M, 167 * M, 177 * M, 0));
+        check(scam.action() == LowballingAiDecision.Action.REPLY_ONLY
+                        && scam.complaint(),
+                "scam accusation with a number is no offer: " + scam);
+
+        LowballingAiDecision otherBid = decide(customContext(
+                "last guy bid 600", 200 * M, 167 * M, 177 * M, 0));
+        check(otherBid.action() == LowballingAiDecision.Action.REPLY_ONLY
+                        && otherBid.counter(),
+                "another bid gets a counter: " + otherBid);
 
         LowballingAiDecision ignore = decide(context(LowballingAiStage.CHAT_OFFER,
                 true, "seller", "lol", 0, 0, 0, false, false, false, 0));
@@ -262,6 +316,36 @@ public final class LowballingAiTest {
                 List.of(message));
     }
 
+    private static LowballingAiContext customContext(String message, long expected,
+                                                     long first, long last,
+                                                     int complaintCount) {
+        return new LowballingAiContext(
+                "CHAT_OFFER",
+                LowballingAiStage.CHAT_OFFER,
+                "seller",
+                "seller",
+                true,
+                "test item",
+                expected,
+                first,
+                last,
+                0,
+                200 * M,
+                0,
+                false,
+                false,
+                false,
+                false,
+                System.currentTimeMillis(),
+                message,
+                List.of(message),
+                0,
+                0,
+                complaintCount,
+                false,
+                List.of(message));
+    }
+
     private static LowballingAiDecision decide(LowballingAiContext context) {
         return LowballingAiPolicy.decide(context, RULES);
     }
@@ -273,6 +357,11 @@ public final class LowballingAiTest {
 
     private static void checkPrice(String text, long expected) {
         long actual = LowballingChatClassifier.classify(text, 10 * M).price();
+        check(actual == expected, "'" + text + "' price " + actual + ", expected " + expected);
+    }
+
+    private static void checkPriceAt(String text, long itemValue, long expected) {
+        long actual = LowballingChatClassifier.classify(text, itemValue).price();
         check(actual == expected, "'" + text + "' price " + actual + ", expected " + expected);
     }
 

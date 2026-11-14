@@ -55,9 +55,16 @@ public class EventSubscribers {
         }
     }
 
+    /** Cofl server messages (login prompts, ads, flip lines) only go to the log, not into chat. */
+    private static void logCofl(Component message) {
+        if (message != null) {
+            System.out.println("[Cofl] " + message.getString().replace('\n', ' '));
+        }
+    }
+
     @Subscribe
     public void WriteToChat(OnWriteToChatReceive command){
-        CoflModClient.displayModMessage(ChatComponent(command.ChatMessage));
+        logCofl(ChatComponent(command.ChatMessage));
     }
 
     @Subscribe
@@ -66,7 +73,8 @@ public class EventSubscribers {
             return;
         }
 
-        runOnClientThread(() -> Util.getPlatform().openUri(event.url));
+        // Cofl asking to open a web page (login): not done any more.
+        System.out.println("[Cofl] URL nicht geöffnet: " + event.url);
     }
 
     @Subscribe
@@ -86,16 +94,18 @@ public class EventSubscribers {
                 combinedMessage.append(styledPart);
             }
         }
-        CoflModClient.displayModMessage(combinedMessage);
+        logCofl(combinedMessage);
     }
 
     @Subscribe
     public void onModChatMessage(OnModChatMessage event){
-        CoflModClient.displayModMessage(Component.literal(event.message));
+        logCofl(Component.literal(event.message));
     }
 
     @Subscribe
     public void onPlaySoundReceive(OnPlaySoundReceive event){
+        // Cofl flip sounds are not played.
+        if (true) return;
         if(event.Sound == null || event.Sound.getSoundName() == null) return;
 
         String soundName = "";
@@ -128,6 +138,8 @@ public class EventSubscribers {
 
     @Subscribe
     public void onCountdownReceive(OnCountdownReceive event){
+        // Cofl's flip countdown HUD stays hidden.
+        if (true) return;
         countdownData = event.CountdownData;
         // Calculate the target expiry time based on current time + duration
         countdownExpiryTime = System.currentTimeMillis() + (long)(event.CountdownData.getDuration() * 1000);
@@ -138,10 +150,7 @@ public class EventSubscribers {
     public void onFlipReceive(OnFlipReceive event){
         FlipData f = event.FlipData;
 
-        if (CoflModClient.bestflipsKeyBinding.isDown()) {
-            EventBus.getDefault().post(new OnOpenAuctionGUI("/viewauction "+f.Id, f));
-        } else
-            CoflCore.flipHandler.fds.Insert(f);
+        CoflCore.flipHandler.fds.Insert(f);
 
         if (com.coflnet.ahflipper.AhFlipperMod.wantsFlips()) {
             com.coflnet.ahflipper.AhFlipperMod.onFlip(f);
@@ -177,7 +186,6 @@ public class EventSubscribers {
     @Subscribe
     public void onSettingsReceive(OnSettingsReceive event){
         System.out.println("SETTINGS RECEIVED: "+event.Settings.size());
-        com.coflnet.gui.cofl.CoflSettingsScreen.refreshIfOpen();
     }
 
     @Subscribe

@@ -80,6 +80,13 @@ public class Trader {
     private volatile int lastScannedOrderCount;
     private volatile long lastDailyLimitLogAt;
     private volatile long heartbeat = System.currentTimeMillis();
+    /** Stuck guard: no progress for this long while something keeps failing -> flipper off. */
+    private static final long STUCK_STOP_MS = 60_000L;
+    /** First failure since the last successful Bazaar action, 0 = none. */
+    private volatile long troubleSince;
+    private volatile String lastTrouble = "";
+    /** A sell offer was started but Hypixel did not confirm one since, 0 = none. */
+    private volatile long sellPendingSince;
     private Thread supervisor;
     private final List<ScreenUtil.GuiOrder> lastScannedBuyOrders = new ArrayList<>();
     private final List<ScreenUtil.GuiOrder> lastScannedSellOffers = new ArrayList<>();
@@ -172,14 +179,28 @@ public class Trader {
         stopRequested = false;
         state = State.RUNNING;
         heartbeat = System.currentTimeMillis();
+        troubleSince = 0;
+        sellPendingSince = 0;
         thread = Thread.ofVirtual().name("skycofl-flipper").start(this::run);
         supervisor = Thread.ofVirtual().name("skycofl-flipper-supervisor").start(this::supervise);
     }
 
     private void supervise() {
         while (!stopRequested) {
-            ScreenUtil.sleep(10_000);
+            ScreenUtil.sleep(5_000);
             if (stopRequested || state != State.RUNNING) return;
+            long nowMs = System.currentTimeMillis();
+            if (paused || isAhPriority()) {
+                // Waiting for the AH is no lack of progress: the minute starts again afterwards.
+                if (troubleSince > 0) troubleSince = nowMs;
+                if (sellPendingSince > 0) sellPendingSince = nowMs;
+            } else if (sellPendingSince > 0 && nowMs - sellPendingSince > STUCK_STOP_MS) {
+                stopBecause("Selling has not worked for 1 minute");
+                return;
+            } else if (troubleSince > 0 && nowMs - troubleSince > STUCK_STOP_MS) {
+                stopBecause("No progress for 1 minute (" + lastTrouble + ")");
+                return;
+            }
             long idle = System.currentTimeMillis() - heartbeat;
             if (idle > 45_000L) {
                 log("SUPERVISOR: Trader seit " + idle + "ms ohne Herzschlag. screen="
@@ -198,6 +219,22 @@ public class Trader {
                 }
             }
         }
+    }
+
+    /**
+     * Turns only the Bazaar flipper off and closes the open menu (unless the AH flipper is
+     * working in it).
+     */
+    private void stopBecause(String reason) {
+        log("Stop: " + reason);
+        chat("\u00a76[Flipper] \u00a7c" + reason + " - Bazaar flipper stopped.");
+        stop();
+        ScreenUtil.onClient(() -> {
+            if (net.minecraft.client.Minecraft.getInstance().gui.screen() != null
+                    && !com.coflnet.ahflipper.AhFlipperMod.isRunningGuiAction()) {
+                ScreenUtil.closeCurrentScreen();
+            }
+        });
     }
 
     public synchronized void stop() {
@@ -655,6 +692,10 @@ public class Trader {
             return;
         }
         log("Fehler - 5s Pause: " + reason);
+        if (troubleSince == 0) {
+            troubleSince = System.currentTimeMillis();
+        }
+        lastTrouble = reason;
         cleanupGui();
         ScreenUtil.BzScreen current = ScreenUtil.currentScreen();
         if (current == ScreenUtil.BzScreen.BAZAAR || current == ScreenUtil.BzScreen.PRODUCT
@@ -1452,6 +1493,9 @@ public class Trader {
         ScreenUtil.GuiOrder worst = null;
         double worstScore = Double.MAX_VALUE;
         for (ScreenUtil.GuiOrder order : lastScannedBuyOrders) {
+            if (!BazaarLimits.itemModeAllowsOrder(cfg, order.itemName)) {
+                continue; // item mode: orders of other items are never cancelled
+            }
             double score = buyOrderExpectedProfit(order);
             if (score < worstScore) {
                 worstScore = score;
@@ -1606,6 +1650,19 @@ public class Trader {
         }
         for (List<ScreenUtil.GuiOrder> group : sellGroups.values()) {
             String itemName = group.get(0).itemName;
+            if (!BazaarLimits.itemModeAllowsOrder(cfg, itemName)) {
+                // Item mode: not in the list - only claim finished coins, never cancel or reprice.
+                for (ScreenUtil.GuiOrder order : group) {
+                    if (order.coinsClaimable && order.claimable > 0) {
+                        busy |= !processSellEntry(order, data);
+                    }
+                }
+                if (stopRequested) {
+                    ordersBusy = true;
+                    return true;
+                }
+                continue;
+            }
             if (group.size() > 1) {
                 log("Mehrere Sell Offers für " + itemName + " (" + group.size() + ") - zusammenführen");
                 busy |= !mergeSellOrders(group, data);
@@ -1649,7 +1706,7 @@ public class Trader {
         List<Trade> batchCancel = new ArrayList<>();
         Set<ScreenUtil.GuiOrder> handled = Collections.newSetFromMap(new java.util.IdentityHashMap<>());
         for (List<ScreenUtil.GuiOrder> group : buyGroups.values()) {
-            if (group.size() <= 1) {
+            if (group.size() <= 1 || !BazaarLimits.itemModeAllowsOrder(cfg, group.get(0).itemName)) {
                 continue;
             }
             group.sort(Comparator.comparingDouble(o -> o.unitPrice));
@@ -1668,9 +1725,10 @@ public class Trader {
             if (handled.contains(order)) {
                 continue;
             }
+            boolean mayCancel = BazaarLimits.itemModeAllowsOrder(cfg, order.itemName);
             MarketData.Product product = productFor(order.itemName);
-            boolean outdated = product != null && product.bestBid > order.unitPrice + 0.05;
-            boolean unprofitable = isBuyOrderUnprofitable(order);
+            boolean outdated = mayCancel && product != null && product.bestBid > order.unitPrice + 0.05;
+            boolean unprofitable = mayCancel && isBuyOrderUnprofitable(order);
             boolean fullyFilled = order.filled >= order.amount && order.amount > 0;
             boolean claimable = order.claimable > 0;
             if ((outdated || unprofitable) && !claimable && !fullyFilled) {
@@ -1928,7 +1986,7 @@ public class Trader {
         }
         MarketData.Product product = productFor(order.itemName);
         boolean outdated = product != null && product.bestAsk > 0 && product.bestAsk < order.unitPrice - 0.05;
-        if (!outdated) {
+        if (!outdated || !BazaarLimits.itemModeAllowsOrder(cfg, order.itemName)) {
             cleanupGui();
             return true;
         }
@@ -2007,8 +2065,10 @@ public class Trader {
             return true;
         }
         MarketData.Product product = productFor(order.itemName);
-        boolean outdated = product != null && product.bestBid > order.unitPrice + 0.05;
-        boolean unprofitable = isBuyOrderUnprofitable(order);
+        // Item mode: orders of items that are not listed are only claimed, never cancelled.
+        boolean mayCancel = BazaarLimits.itemModeAllowsOrder(cfg, order.itemName);
+        boolean outdated = mayCancel && product != null && product.bestBid > order.unitPrice + 0.05;
+        boolean unprofitable = mayCancel && isBuyOrderUnprofitable(order);
         boolean fullyFilled = target.filled >= target.amount && target.amount > 0;
         boolean partiallyFilled = target.filled > 0 && !fullyFilled;
         boolean claimable = target.claimable > 0;
@@ -2470,6 +2530,9 @@ public class Trader {
 
     private boolean createSellOfferFromInventory(Trade trade, MarketData data) {
         checkStop();
+        if (sellPendingSince == 0) {
+            sellPendingSince = System.currentTimeMillis();
+        }
         refreshMarketIfStale();
         MarketData fresh = market != null ? market : data;
         if (!openBazaar()) {
@@ -2860,6 +2923,21 @@ public class Trader {
     public synchronized void onChatEvent(BazaarChatEvent event) {
         if (event == null) {
             return;
+        }
+        if (event.type == BazaarChatEvent.Type.DAILY_SELL_LIMIT) {
+            // "You reached the daily limit in items value that you may sell on the bazaar!"
+            if (state == State.RUNNING) {
+                stopBecause("Daily Bazaar sell limit reached");
+            }
+            return;
+        }
+        switch (event.type) {
+            case ORDER_LIMIT, INVENTORY_FULL, DAILY_BUY_LIMIT, OTHER -> {
+            }
+            default -> troubleSince = 0; // a Bazaar action went through
+        }
+        if (event.type == BazaarChatEvent.Type.SELL_SETUP || event.type == BazaarChatEvent.Type.FLIPPED) {
+            sellPendingSince = 0;
         }
         try {
             switch (event.type) {

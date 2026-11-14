@@ -46,7 +46,7 @@ public final class LowballingChatClassifier {
             "deal", "works", "work", "send", "trade", "for", "price", "max", "best",
             "pls", "please", "ok", "okay", "ill", "can", "could", "would", "will",
             "firm", "final", "lowest", "highest", "maximum", "minimum", "about",
-            "much", "gimme");
+            "much", "gimme", "bid", "bidded", "offered", "paying");
 
     private static final Set<String> INSULT_WORDS = Set.of(
             "crazy", "idiot", "stupid", "dumb", "moron", "clown", "loser", "broke",
@@ -56,15 +56,30 @@ public final class LowballingChatClassifier {
             "are you serious", "are u serious", "what is wrong with you", "youre a joke",
             "this is a joke", "what a joke", "you must be joking", "youre joking",
             "shut up", "screw you", "get lost", "actually insane", "insane offer",
-            "worst offer", "horrible offer", "terrible offer");
+            "worst offer", "horrible offer", "terrible offer", "eat my", "suck my",
+            "fuck you", "stfu", "get a life", "touch grass");
     private static final Set<String> WAIT_WORDS = Set.of(
             "wait", "sec", "secs", "second", "seconds", "brb", "afk", "moment",
-            "hold", "gimme", "minute", "min");
+            "hold", "gimme", "minute", "min", "wati", "waitt", "w8", "waitin",
+            "waiting", "mom");
     private static final Set<String> GREETING_WORDS = Set.of(
             "hi", "hey", "hello", "yo", "sup", "howdy", "heya", "greetings");
     private static final Set<String> QUESTION_START = Set.of(
             "how", "what", "whats", "why", "when", "where", "who", "do", "does",
             "can", "could", "would", "will", "are", "is", "u");
+    private static final Set<String> ITEM_WORDS = Set.of(
+            "hat", "boots", "helmet", "chestplate", "leggings", "sword", "pet", "skin",
+            "armor", "armour", "item", "items", "stuff", "pickaxe", "drill", "wand",
+            "bow", "axe", "shovel", "hoe", "talisman", "ring", "necklace", "cloak",
+            "belt", "gloves", "gauntlet", "dagger", "staff", "rune", "dye", "minion",
+            "cake", "pants", "shoes", "weapon", "accessory", "accessories");
+    private static final List<String> WEALTH_PHRASES = List.of(
+            "how did u make", "how did you make", "how do u make", "how do you make",
+            "how did u get", "how did you get", "how do u have", "how do you have",
+            "how have u", "how have you", "how does bro have", "how does he have",
+            "how u got", "how did bro get", "how are u so rich", "how are you so rich",
+            "how rich", "how much money do u have", "how much money do you have",
+            "whats your secret", "what is your secret");
 
     private static final double ALPHA = 1.0;
     private static final Map<String, Map<String, Integer>> COUNTS = new HashMap<>();
@@ -99,10 +114,16 @@ public final class LowballingChatClassifier {
         boolean wait = isWait(lower);
         boolean greeting = isGreeting(lower);
         boolean ahRequest = isAhRequest(lower);
+        boolean wealthQuestion = isWealthQuestion(lower);
 
         if (ahRequest) {
             return result(LowballingChatIntent.AH_OFFER, 1.0, price, pricePresent,
                     agreement, refusal, complaint, insult, valueClaim, question, wait,
+                    greeting, raw);
+        }
+        if (wealthQuestion) {
+            return result(LowballingChatIntent.WEALTH_QUESTION, 1.0, 0, false,
+                    agreement, refusal, complaint, insult, false, question, wait,
                     greeting, raw);
         }
         // A market claim ("lbin is 30m") is not an offer to sell for that
@@ -152,6 +173,11 @@ public final class LowballingChatClassifier {
         if (greeting) {
             return result(LowballingChatIntent.GREETING, 0.9, 0, false,
                     false, false, complaint, insult, false, question, false, true, raw);
+        }
+        if (isItemMention(lower)) {
+            return result(LowballingChatIntent.ITEM_MENTION, 0.9, 0, false,
+                    false, false, complaint, insult, valueClaim, question, wait,
+                    greeting, raw);
         }
 
         String label = null;
@@ -255,6 +281,42 @@ public final class LowballingChatClassifier {
                 || lower.contains("u there") || lower.contains("you there");
     }
 
+    private static boolean isWealthQuestion(String lower) {
+        for (String phrase : WEALTH_PHRASES) {
+            if (lower.contains(phrase)) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    /**
+     * "selling my hat", "the final destination im wearing", "i have a hyperion"
+     * are item statements, not prices. Compliments such as "nice armor" are not.
+     */
+    private static boolean isItemMention(String lower) {
+        if (lower.contains("nice") || lower.contains("cool") || lower.contains("dope")
+                || lower.contains("looks good") || lower.contains("looking good")) {
+            return false;
+        }
+        if (hasWord(lower, ITEM_WORDS)) {
+            return true;
+        }
+        if (lower.contains("selling") || lower.contains("im wearing")
+                || lower.contains("i wear") || lower.contains("i am wearing")) {
+            return true;
+        }
+        if (lower.matches(".*\\bi (have|got) (a|an|some|these|this)\\b.*")) {
+            if (lower.matches(".*\\b\\d+(?:[.,]\\d+)*\\s*(k|m|mil|million|b|bil|billion)\\b.*")
+                    || lower.matches(".*\\b(bil|billion|mil|million)\\b.*")
+                    || lower.contains("coins") || lower.contains("purse")) {
+                return false;
+            }
+            return true;
+        }
+        return false;
+    }
+
     /**
      * "look at my ah", "buy it from ah", "would u lb my ah" ... We only trade
      * directly. A pure market claim like "on ah for 20m" is not a request.
@@ -267,9 +329,13 @@ public final class LowballingChatClassifier {
         if (text.startsWith("/ah") || text.startsWith("./ah") || text.startsWith(".ah")) {
             return true;
         }
-        boolean hasAh = text.matches(".*\\bah\\b.*") || text.contains("auction");
+        boolean hasAh = text.matches(".*\\bah\\b.*") || text.contains("auction")
+                || text.contains("myah");
         if (!hasAh) {
             return false;
+        }
+        if (text.contains("myah")) {
+            return true;
         }
         boolean valueClaim = LowballingSmartChat.isValueClaim(text);
         boolean direct = text.contains("my ah") || text.contains("my auction")
@@ -311,7 +377,7 @@ public final class LowballingChatClassifier {
      * price, so only accept numbers that really look like an offer.
      */
     static long parsePrice(String text, long itemValue, String lower) {
-        if (text == null || text.isBlank()) {
+        if (text == null || text.isBlank() || isWealthQuestion(lower)) {
             return 0;
         }
         Matcher suffix = SUFFIX_PRICE.matcher(text);

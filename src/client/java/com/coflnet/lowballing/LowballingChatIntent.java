@@ -9,6 +9,8 @@ public enum LowballingChatIntent {
     INSULT,
     VALUE_CLAIM,
     AH_OFFER,
+    WEALTH_QUESTION,
+    ITEM_MENTION,
     QUESTION,
     WAIT,
     GREETING,

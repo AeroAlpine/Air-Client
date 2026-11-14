@@ -296,8 +296,13 @@ public class AhItem {
         List<String> lines = ScreenUtil.sync(() -> {
             List<Component> tooltip = stack.getTooltipLines(Item.TooltipContext.EMPTY,
                     Minecraft.getInstance().player, TooltipFlag.NORMAL);
-            ItemTooltipCallback.EVENT.invoker().getTooltip(stack,
-                    Item.TooltipContext.EMPTY, TooltipFlag.NORMAL, tooltip);
+            com.coflnet.CoflModClient.collectingCoflTooltip = true;
+            try {
+                ItemTooltipCallback.EVENT.invoker().getTooltip(stack,
+                        Item.TooltipContext.EMPTY, TooltipFlag.NORMAL, tooltip);
+            } finally {
+                com.coflnet.CoflModClient.collectingCoflTooltip = false;
+            }
             List<String> result = new ArrayList<>();
             for (Component line : tooltip) {
                 result.add(line.getString());

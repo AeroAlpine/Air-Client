@@ -550,36 +550,53 @@ public final class  ClickGuiScreen extends Screen {
             add(automation,new CombatSlider(panelWidth-20,"Place delay (ticks)",1,4,1,
                     pingplus.voicechat.client.FastPlaceFeature::delayTicks,v->PlayerSettings.fastPlaceDelayTicks=(int)v),26);
         });
-        toggle(automation,"KillAura",()->PlayerSettings.killAura,()->{
-            PlayerSettings.killAura=!PlayerSettings.killAura;
-            if (!PlayerSettings.killAura) pingplus.voicechat.client.KillAuraFeature.clear();
-        });
-        options(automation,"KillAura options",()-> {
-            toggle(automation,"Target players",()->PlayerSettings.killAuraPlayers,()->PlayerSettings.killAuraPlayers=!PlayerSettings.killAuraPlayers);
-            toggle(automation,"Target mobs",()->PlayerSettings.killAuraMobs,()->PlayerSettings.killAuraMobs=!PlayerSettings.killAuraMobs);
-            add(automation,new CombatSlider(panelWidth-20,"Range",1,4,.1,()->PlayerSettings.killAuraRange,v->PlayerSettings.killAuraRange=(float)v),26);
-            add(automation,new CombatSlider(panelWidth-20,"Turn speed",45,540,15,()->PlayerSettings.killAuraTurnSpeed,v->PlayerSettings.killAuraTurnSpeed=(float)v),26);
-        });
-        nameBox(automation,"Follow",()->PlayerSettings.followTarget,v->PlayerSettings.followTarget=v);
-        options(automation,"Follow options",()-> {
-            optionLabel(automation,"Player, mob or type");
-            toggle(automation,"Attack target",()->PlayerSettings.followAttack,
-                ()->PlayerSettings.followAttack=!PlayerSettings.followAttack);
-            add(automation,new CombatSlider(panelWidth-20,"Follow distance",1,16,1,
-                ()->PlayerSettings.followDistance,v->PlayerSettings.followDistance=(int)Math.round(v)),26);
-            add(automation,new CombatSlider(panelWidth-20,"CPS min",1,20,.5,
-                ()->PlayerSettings.followCpsMin,v->{PlayerSettings.followCpsMin=v;
-                    if(PlayerSettings.followCpsMax<v)PlayerSettings.followCpsMax=v;}),26);
-            add(automation,new CombatSlider(panelWidth-20,"CPS max",1,20,.5,
-                ()->PlayerSettings.followCpsMax,v->{PlayerSettings.followCpsMax=v;
-                    if(PlayerSettings.followCpsMin>v)PlayerSettings.followCpsMin=v;}),26);
-        });
-        toggle(automation,"Look at nearby players",()->PlayerSettings.followLookAtNearbyPlayers,
-            ()->PlayerSettings.followLookAtNearbyPlayers=!PlayerSettings.followLookAtNearbyPlayers);
         toggle(automation,"Hand swap",()->PlayerSettings.handSwap,()->PlayerSettings.handSwap=!PlayerSettings.handSwap);
         options(automation,"Swap interval",()-> {
             add(automation,new SpeedSlider(panelWidth-20),26);
         });
+        Category combat = category("COMBAT", "Follow and fight your targets");
+        {
+            var combatKey = pingplus.voicechat.client.FollowFeature.toggleKey();
+            String keyName = combatKey == null || combatKey.isUnbound() ? "not set (KEYS)"
+                    : combatKey.getTranslatedKeyMessage().getString();
+            toggle(combat,"Combat",()->PlayerSettings.combatEnabled,pingplus.voicechat.client.FollowFeature::toggle);
+            options(combat,"Combat options",()-> {
+                optionLabel(combat,"Hotkey: "+keyName);
+                toggle(combat,"Attack target",()->PlayerSettings.followAttack,
+                    ()->PlayerSettings.followAttack=!PlayerSettings.followAttack);
+                add(combat,new CombatSlider(panelWidth-20,"Follow distance",1,16,1,
+                    ()->PlayerSettings.followDistance,v->PlayerSettings.followDistance=(int)Math.round(v)),26);
+                add(combat,new CombatSlider(panelWidth-20,"Rotation speed",30,1080,10,
+                    ()->PlayerSettings.combatRotationSpeed,v->PlayerSettings.combatRotationSpeed=(float)v),26);
+                add(combat,new CombatSlider(panelWidth-20,"CPS min",1,20,.5,
+                    ()->PlayerSettings.followCpsMin,v->{PlayerSettings.followCpsMin=v;
+                        if(PlayerSettings.followCpsMax<v)PlayerSettings.followCpsMax=v;}),26);
+                add(combat,new CombatSlider(panelWidth-20,"CPS max",1,20,.5,
+                    ()->PlayerSettings.followCpsMax,v->{PlayerSettings.followCpsMax=v;
+                        if(PlayerSettings.followCpsMin>v)PlayerSettings.followCpsMin=v;}),26);
+                toggle(combat,"Look at nearby players",()->PlayerSettings.followLookAtNearbyPlayers,
+                    ()->PlayerSettings.followLookAtNearbyPlayers=!PlayerSettings.followLookAtNearbyPlayers);
+            });
+            itemListBox(combat,"Add target","Combat",pingplus.voicechat.client.FollowFeature::addTarget,
+                    PlayerSettings::save,"Target added:","is already a target",
+                    "Player name, mob name or entity type - Enter adds it");
+            List<String> targets = pingplus.voicechat.client.FollowFeature.targets();
+            optionLabel(combat,targets.isEmpty() ? "Targets: none - Enter adds" : "Targets: "+targets.size()+" - x removes");
+            for (String target : targets) {
+                itemListRow(combat,target,"Combat",pingplus.voicechat.client.FollowFeature::removeTarget,
+                        PlayerSettings::save,"Target removed:","was not a target","Click to remove");
+            }
+            toggle(combat,"KillAura",()->PlayerSettings.killAura,()->{
+                PlayerSettings.killAura=!PlayerSettings.killAura;
+                if (!PlayerSettings.killAura) pingplus.voicechat.client.KillAuraFeature.clear();
+            });
+            options(combat,"KillAura options",()-> {
+                toggle(combat,"Target players",()->PlayerSettings.killAuraPlayers,()->PlayerSettings.killAuraPlayers=!PlayerSettings.killAuraPlayers);
+                toggle(combat,"Target mobs",()->PlayerSettings.killAuraMobs,()->PlayerSettings.killAuraMobs=!PlayerSettings.killAuraMobs);
+                add(combat,new CombatSlider(panelWidth-20,"Range",1,4,.1,()->PlayerSettings.killAuraRange,v->PlayerSettings.killAuraRange=(float)v),26);
+                add(combat,new CombatSlider(panelWidth-20,"Turn speed",45,540,15,()->PlayerSettings.killAuraTurnSpeed,v->PlayerSettings.killAuraTurnSpeed=(float)v),26);
+            });
+        }
         Category pathfinder = category("PATHFINDER", "Baritone tuning and fault learning");
         {
             com.coflnet.pathing.PathfinderConfig pf = com.coflnet.pathing.PathfinderConfig.get();
@@ -603,6 +620,22 @@ public final class  ClickGuiScreen extends Screen {
             });
             toggle(pathfinder,"Avoid standing NPCs",()->pf.avoidStandingEntities,()->{pf.avoidStandingEntities=!pf.avoidStandingEntities;pf.save();});
             toggle(pathfinder,"Setback guard",()->pf.setbackGuard,()->{pf.setbackGuard=!pf.setbackGuard;pf.save();});
+            toggle(pathfinder,"Path recorder",()->pf.recordPaths,()->{pf.recordPaths=!pf.recordPaths;pf.save();});
+            options(pathfinder,"Path recorder",()-> {
+                optionLabel(pathfinder,"Logs every run: plan vs. reality");
+                optionLabel(pathfinder,"Folder: logs/pathfinder");
+                toggle(pathfinder,"Summary in chat",()->pf.recorderChat,()->{pf.recorderChat=!pf.recorderChat;pf.save();});
+                String last=com.coflnet.pathing.PathRecorder.lastSummary();
+                optionLabel(pathfinder,last.isEmpty() ? "No run recorded yet" : "Last: "+last);
+                actionButton(pathfinder,"Open log folder",()->{
+                    try {
+                        java.nio.file.Files.createDirectories(com.coflnet.pathing.PathRecorder.folder());
+                        net.minecraft.util.Util.getPlatform().openPath(com.coflnet.pathing.PathRecorder.folder());
+                    } catch (Exception e) {
+                        AhFlipperMod.message("\u00a7cOrdner nicht geöffnet: "+e.getMessage());
+                    }
+                });
+            });
             actionButton(pathfinder,"AOTV: "+com.coflnet.pathing.AotvAssist.mode().name().toLowerCase(Locale.ROOT),()->{
                 com.coflnet.pathing.AotvAssist.Mode[] modes=com.coflnet.pathing.AotvAssist.Mode.values();
                 pf.aotvMode=modes[(com.coflnet.pathing.AotvAssist.mode().ordinal()+1)%modes.length].name();
@@ -795,7 +828,7 @@ public final class  ClickGuiScreen extends Screen {
                     ()->fc.maxInvestedMillions,v->{fc.maxInvestedMillions=v;fc.save();}),26);
             toggle(skyblock,"Item mode",()->fc.onlyItemsMode,()->{fc.onlyItemsMode=!fc.onlyItemsMode;fc.save();});
             itemListBox(skyblock,"Flip item (Enter)","Bazaar item mode",fc::addOnlyItem,fc::save,
-                    "Added","is already listed","Type a Bazaar item name and press Enter: item mode flips only these.");
+                    null,null,"Type a Bazaar item name (or the start of it) and press Enter: the exact product name is added, item mode flips only these.");
             List<String> onlyItems=fc.onlyItems==null?List.of():List.copyOf(fc.onlyItems);
             if(fc.onlyItemsMode&&onlyItems.isEmpty()) optionLabel(skyblock,"Item mode: list empty");
             for(String item:onlyItems) itemListRow(skyblock,item,"Bazaar item mode",fc::removeOnlyItem,fc::save,
@@ -970,6 +1003,7 @@ public final class  ClickGuiScreen extends Screen {
         keyButton(keys, "Zoom", VoicechatClient.zoomKey());
         keyButton(keys, "Shoulder cam", VoicechatClient.shoulderCamKey());
         keyButton(keys, "Killaura", VoicechatClient.killAuraKey());
+        keyButton(keys, "Combat", pingplus.voicechat.client.FollowFeature.toggleKey());
         keyButton(keys, "Auction Flipper", AhFlipperMod.toggleKey());
         keyButton(keys, "Investment GUI", AhFlipperMod.investKey());
         keyButton(keys, "Fire Sale GUI", AhFlipperMod.fireSaleKey());
@@ -1234,7 +1268,7 @@ public final class  ClickGuiScreen extends Screen {
                     if (!value.isEmpty()) {
                         boolean added=adder.apply(value);
                         save.run();
-                        AhFlipperMod.message(added
+                        if (addedWord != null) AhFlipperMod.message(added
                                 ? "§a["+prefix+"] §7"+addedWord+" §f"+value
                                 : "§e["+prefix+"] §f"+value+" §7"+existsWords);
                         setValue("");
@@ -1365,6 +1399,7 @@ public final class  ClickGuiScreen extends Screen {
         if (VoicechatClient.zoomKey() != null) VoicechatClient.zoomKey().setKey(InputConstants.Type.KEYSYM.getOrCreate(GLFW.GLFW_KEY_C));
         if (VoicechatClient.shoulderCamKey() != null) VoicechatClient.shoulderCamKey().setKey(InputConstants.Type.KEYSYM.getOrCreate(GLFW.GLFW_KEY_R));
         if (VoicechatClient.killAuraKey() != null) VoicechatClient.killAuraKey().setKey(InputConstants.Type.KEYSYM.getOrCreate(GLFW.GLFW_KEY_Z));
+        if (pingplus.voicechat.client.FollowFeature.toggleKey() != null) pingplus.voicechat.client.FollowFeature.toggleKey().setKey(InputConstants.UNKNOWN);
         if (AhFlipperMod.toggleKey() != null) AhFlipperMod.toggleKey().setKey(InputConstants.Type.KEYSYM.getOrCreate(GLFW.GLFW_KEY_F9));
         if (FlipperMod.toggleKey() != null) FlipperMod.toggleKey().setKey(InputConstants.Type.KEYSYM.getOrCreate(GLFW.GLFW_KEY_F7));
         if (LowballingMod.toggleKey() != null) LowballingMod.toggleKey().setKey(InputConstants.Type.KEYSYM.getOrCreate(GLFW.GLFW_KEY_F6));

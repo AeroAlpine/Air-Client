@@ -249,7 +249,7 @@ public class FlipperMod {
         return 1;
     }
 
-    private static void message(String text) {
+    public static void message(String text) {
         CoflModClient.displayModMessage(Component.literal(text));
     }
 }

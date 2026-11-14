@@ -5,8 +5,9 @@
   "client": [
     "AhInstantClickMixin",
     "BackgroundAutomationMixin",
+    "LocalPlayerRotationAccessor",
+    "PathSetbackMixin",
     "BackgroundFramerateMixin",
-    "ChatScreenMixin",
     "ClientPlayerEntityMixin",
     "FlipperSignFillMixin",
     "HandledScreenMixin",
@@ -18,8 +19,6 @@
     "ScoreboardMixin",
     "ServerTimeLagMixin",
     "ScrollableWidgetMixin",
-    "AuctionProtectionMixin",
-    "SellProtectionMixin",
     "WorldRendererMixin"
   ],
   "injectors": {

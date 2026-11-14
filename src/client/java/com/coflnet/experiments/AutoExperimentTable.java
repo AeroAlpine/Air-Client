@@ -107,6 +107,8 @@ public final class AutoExperimentTable {
     private static long waitUntil;
     private static long lastProgressAt;
     private static long lastClickAt;
+    /** Wait before the next menu click: the click delay with its ±1 ms offset, drawn per click. */
+    private static long nextClickGapMs = CONFIG.clickDelayMs;
     private static PendingClick pending;
     /** Finished or stopped while a menu was open: wait for it to close before arming again. */
     private static boolean ignoreUntilClosed;
@@ -144,6 +146,11 @@ public final class AutoExperimentTable {
     private static int chronoLitSlot = -1;
     private static String chronoLitKey;
     private static long chronoNextClickAt;
+    /** When the current replay started, and the note we clicked last (it may still glow then). */
+    private static long chronoShowSince;
+    private static String chronoLastClickedKey;
+    /** Our own last click can light up a moment after the replay started: ignored this long. */
+    private static final long CHRONO_ECHO_MS = 350;
     private static long chronoGameStart;
     private static String chronoDiag = "";
     /** Gap between two note clicks; Hypixel drops notes clicked faster. */
@@ -573,6 +580,8 @@ public final class AutoExperimentTable {
         chronoLitSlot = -1;
         chronoLitKey = null;
         chronoNextClickAt = 0;
+        chronoShowSince = 0;
+        chronoLastClickedKey = null;
         inputIndex = 0;
         completedRounds = 0;
         board.clear();
@@ -637,11 +646,16 @@ public final class AutoExperimentTable {
                     return;
                 }
                 showSlots.clear();
-                chronoLitSlot = -1;
-                chronoLitKey = null;
+                chronoShowSince = now;
+                // A note lit right now is our own last click still glowing, not part of the replay.
+                chronoLitSlot = lit;
+                chronoLitKey = lit >= 0 ? noteKey(lit) : null;
+                if (lit >= 0) {
+                    log("Chrono: Slot " + lit + " leuchtet noch vom eigenen Klick - ignoriert");
+                }
                 logChronoBoard(now);
             }
-            trackChronoNote(lit);
+            trackChronoNote(now, lit);
             lastPhase = Phase.SHOW;
             return;
         }
@@ -661,14 +675,15 @@ public final class AutoExperimentTable {
         log("Chronomatron Klick " + (inputIndex + 1) + "/" + chronoSlots.size() + ": Slot " + slot
                 + " (" + nameAt(slot) + ")");
         clickRaw(slot, false);
+        chronoLastClickedKey = noteKey(slot);
         lastClickAt = now;
         lastProgressAt = now;
         inputIndex++;
-        chronoNextClickAt = now + Math.max(CHRONO_CLICK_GAP_MS, CONFIG.clickDelayMs);
+        chronoNextClickAt = now + jitter(Math.max(CHRONO_CLICK_GAP_MS, CONFIG.clickDelayMs));
     }
 
     /** One replay note = the board going from dark (or another note) to a lit note. */
-    private static void trackChronoNote(int lit) {
+    private static void trackChronoNote(long now, int lit) {
         String key = lit >= 0 ? noteKey(lit) : null;
         if (chronoLitSlot >= 0) {
             if (key != null && key.equals(chronoLitKey)) {
@@ -677,15 +692,24 @@ public final class AutoExperimentTable {
             chronoLitSlot = -1;
             chronoLitKey = null;
         }
-        if (lit >= 0) {
-            chronoLitSlot = lit;
-            chronoLitKey = key;
-            showSlots.add(lit);
-            log("Chrono Note " + showSlots.size() + ": Slot " + lit + " " + describeSlot(lit));
+        if (lit < 0) {
+            return;
         }
+        chronoLitSlot = lit;
+        chronoLitKey = key;
+        if (showSlots.isEmpty() && key.equals(chronoLastClickedKey) && now - chronoShowSince < CHRONO_ECHO_MS) {
+            log("Chrono: Slot " + lit + " ist das Echo des eigenen Klicks - ignoriert");
+            return;
+        }
+        showSlots.add(lit);
+        log("Chrono Note " + showSlots.size() + ": Slot " + lit + " " + describeSlot(lit));
     }
 
-    /** Our turn started: add the note that is new in this round. */
+    /**
+     * Our turn started: add the note that is new in this round. Hypixel replays the known
+     * notes and lights the new one exactly when the timer appears, so a replay of the known
+     * length confirms (or corrects) our history, and the note lit now is the new one.
+     */
     private static void startChronoInput(long now, int lit) {
         int known = chronoSlots.size();
         List<String> seen = new ArrayList<>();
@@ -693,22 +717,32 @@ public final class AutoExperimentTable {
             seen.add(slot + "=" + nameAt(slot));
         }
         log("Chronomatron gesehen: " + seen + (lit >= 0 ? " | leuchtet noch: " + lit + "=" + nameAt(lit) : ""));
-        int newest;
-        String source;
+        List<Integer> replay = new ArrayList<>(showSlots);
+        int newest = -1;
+        String source = "";
         if (lit >= 0) {
             newest = lit;
             source = "leuchtet beim Timer-Start";
-        } else if (!showSlots.isEmpty()) {
-            newest = showSlots.getLast();
+            if (chronoLitSlot >= 0 && !replay.isEmpty() && noteKey(lit).equals(chronoLitKey)) {
+                // It lit up already in the replay and is still on: that event is this new note.
+                replay.removeLast();
+            }
+        } else if (replay.size() == known + 1) {
+            newest = replay.removeLast();
             source = "letzte Note der Wiedergabe";
-        } else {
-            newest = -1;
-            source = "";
+        } else if (!replay.isEmpty()) {
+            newest = replay.getLast();
+            source = "letzte Note der Wiedergabe (Länge passt nicht)";
+            replay.clear();
         }
-        if (showSlots.size() == known + 1) {
-            // Whole replay seen with the right length: it beats our own history.
+        if (replay.size() == known && known > 0) {
+            if (!sameNotes(replay, chronoSlots)) {
+                log("Chronomatron: Wiedergabe weicht vom Verlauf ab - nehme die Wiedergabe");
+            }
             chronoSlots.clear();
-            chronoSlots.addAll(showSlots.subList(0, known));
+            chronoSlots.addAll(replay);
+        } else if (!replay.isEmpty()) {
+            log("Chronomatron: Wiedergabe hat " + replay.size() + " statt " + known + " Noten - behalte den Verlauf");
         }
         if (newest >= 0) {
             chronoSlots.add(newest);
@@ -719,12 +753,24 @@ public final class AutoExperimentTable {
         inputIndex = 0;
         lastPhase = Phase.INPUT;
         chronoInputSince = now;
-        chronoNextClickAt = now + Math.max(CHRONO_CLICK_GAP_MS, CONFIG.clickDelayMs);
+        chronoNextClickAt = now + jitter(Math.max(CHRONO_CLICK_GAP_MS, CONFIG.clickDelayMs));
         List<String> plan = new ArrayList<>();
         for (int slot : chronoSlots) {
             plan.add(slot + "=" + nameAt(slot));
         }
         log("Chronomatron Runde " + chronoSlots.size() + ": " + plan);
+    }
+
+    private static boolean sameNotes(List<Integer> a, List<Integer> b) {
+        if (a.size() != b.size()) {
+            return false;
+        }
+        for (int i = 0; i < a.size(); i++) {
+            if (!noteKey(a.get(i)).equals(noteKey(b.get(i)))) {
+                return false;
+            }
+        }
+        return true;
     }
 
     private static void tickUltrasequencer(long now) {
@@ -1211,7 +1257,7 @@ public final class AutoExperimentTable {
                 return;
             }
         }
-        if (now - lastClickAt < CONFIG.clickDelayMs) {
+        if (now - lastClickAt < nextClickGapMs) {
             return;
         }
         if (container() == null) {
@@ -1232,10 +1278,16 @@ public final class AutoExperimentTable {
         p.attempts++;
         p.clickedAt = now;
         lastClickAt = now;
+        nextClickGapMs = jitter(CONFIG.clickDelayMs);
     }
 
     private static String signatureFor(PendingClick p) {
         return p.boardOnly ? signature(9, Math.min(45, size())) : signature(0, size());
+    }
+
+    /** {@code baseMs} with a random offset of -1, 0 or +1 ms, so the clicks are not perfectly even. */
+    private static long jitter(long baseMs) {
+        return Math.max(0L, baseMs + java.util.concurrent.ThreadLocalRandom.current().nextInt(-1, 2));
     }
 
     private static long verifyWindowMs() {

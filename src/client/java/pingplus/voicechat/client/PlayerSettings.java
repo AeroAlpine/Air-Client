@@ -73,7 +73,14 @@ public final class PlayerSettings {
     public static boolean killAuraMobs = true;
     public static float killAuraRange = 3f;
     public static float killAuraTurnSpeed = 170f;
+    /** Old single Follow target; moved into {@link #combatTargets} on load. */
     public static String followTarget = "";
+    /** Combat (formerly Follow): on/off, also toggled by its hotkey. */
+    public static boolean combatEnabled = false;
+    /** Combat targets: player names, mob names or entity types, separated by ';'. */
+    public static String combatTargets = "";
+    /** Combat: how fast the camera turns while following (degrees per second). */
+    public static float combatRotationSpeed = 260f;
     public static boolean followLookAtNearbyPlayers = false;
     /** Follow: attack the followed target (through KillAura, only that target). */
     public static boolean followAttack = false;
@@ -85,6 +92,10 @@ public final class PlayerSettings {
 
     static {
         load();
+        if (followTarget != null && !followTarget.isBlank() && (combatTargets == null || combatTargets.isBlank())) {
+            combatTargets = followTarget.trim();
+        }
+        followTarget = "";
     }
 
     public static synchronized void save() {

@@ -101,6 +101,7 @@ public final class BazaarLimits {
         if (!itemModeActive(cfg) || data == null) {
             return excluded;
         }
+        migrateItemList(cfg, data);
         for (String productId : data.products.keySet()) {
             if (!allowed(cfg.onlyItems, productId, ItemNames.displayName(productId))) {
                 excluded.add(productId);
@@ -110,27 +111,126 @@ public final class BazaarLimits {
     }
 
     /**
-     * Listed by display name ("Enchanted Diamond"), product id ("ENCHANTED_DIAMOND") or part of
-     * the name ("onyx" = every Onyx gemstone). Symbols do not count: the Bazaar calls it
-     * "☠ Perfect Onyx Gemstone", and "perfect onyx gemstone" never matched, so item mode flipped nothing.
+     * Item mode: may the bot cancel, reprice or merge this order? Only orders of listed items;
+     * orders of everything else stay untouched (claiming filled ones is still allowed).
+     */
+    public static boolean itemModeAllowsOrder(FlipperConfig cfg, String orderItemName) {
+        if (!itemModeActive(cfg)) {
+            return true;
+        }
+        migrateItemList(cfg, null);
+        return allowed(cfg.onlyItems, ItemNames.productId(orderItemName), orderItemName);
+    }
+
+    /**
+     * Listed by its exact Bazaar name ("Recombobulator 3000") or product id
+     * ("RECOMBOBULATOR_3000"). Symbols and case do not count ("☠ Perfect Onyx Gemstone" =
+     * "perfect onyx gemstone"); parts of a name do not match any more.
      */
     static boolean allowed(List<String> items, String productId, String displayName) {
         String id = normalize(productId);
         String name = normalize(displayName);
-        Set<String> nameWords = new HashSet<>(List.of(name.split(" ")));
         for (String entry : items) {
             String wanted = normalize(entry);
-            if (wanted.isEmpty()) {
-                continue;
-            }
-            if (wanted.equals(name) || wanted.equals(id.replace('_', ' '))) {
-                return true;
-            }
-            if (nameWords.containsAll(List.of(wanted.split(" ")))) {
+            if (!wanted.isEmpty() && (wanted.equals(name) || wanted.equals(id))) {
                 return true;
             }
         }
         return false;
+    }
+
+    /** Most products one entry may expand to ("onyx" = the five Onyx gemstones). */
+    static final int MAX_MATCHES = 8;
+
+    /**
+     * The exact Bazaar products meant by what the user typed: an exact name or product id first,
+     * otherwise every product whose name words start with the typed words ("recomb" ->
+     * "Recombobulator 3000", "perf onyx" -> "Perfect Onyx Gemstone"). Sorted by name.
+     */
+    public static List<String> resolveItem(String input, MarketData data) {
+        String wanted = normalize(input);
+        java.util.Map<String, String> products = new java.util.TreeMap<>(ItemNames.allProducts());
+        if (data != null) {
+            for (String id : data.products.keySet()) {
+                products.putIfAbsent(id, ItemNames.displayName(id));
+            }
+        }
+        java.util.List<String> result = new java.util.ArrayList<>();
+        if (wanted.isEmpty()) {
+            return result;
+        }
+        for (java.util.Map.Entry<String, String> e : products.entrySet()) {
+            if (wanted.equals(normalize(e.getValue()))) {
+                result.add(e.getValue().trim());
+                return result;
+            }
+        }
+        // A product id only when one was typed ("ONYX" is Black Diamond, "onyx" means the gems).
+        String raw = input.trim();
+        if (raw.contains("_") || (raw.equals(raw.toUpperCase(Locale.ROOT)) && !raw.equals(raw.toLowerCase(Locale.ROOT)))) {
+            for (java.util.Map.Entry<String, String> e : products.entrySet()) {
+                if (wanted.equals(normalize(e.getKey()))) {
+                    result.add(e.getValue().trim());
+                    return result;
+                }
+            }
+        }
+        String[] parts = wanted.split(" ");
+        for (java.util.Map.Entry<String, String> e : products.entrySet()) {
+            String[] words = normalize(e.getValue()).split(" ");
+            boolean all = true;
+            for (String part : parts) {
+                boolean found = false;
+                for (String word : words) {
+                    if (word.startsWith(part)) {
+                        found = true;
+                        break;
+                    }
+                }
+                if (!found) {
+                    all = false;
+                    break;
+                }
+            }
+            if (all && !result.contains(e.getValue().trim())) {
+                result.add(e.getValue().trim());
+            }
+        }
+        result.sort(String.CASE_INSENSITIVE_ORDER);
+        return result;
+    }
+
+    /**
+     * Older lists hold what was typed ("recomb"); exact matching needs the real names. Entries
+     * that are not an exact product name are replaced by what they resolve to.
+     */
+    static synchronized void migrateItemList(FlipperConfig cfg, MarketData data) {
+        if (cfg.onlyItems == null || cfg.onlyItems.isEmpty()) {
+            return;
+        }
+        java.util.List<String> fixed = new java.util.ArrayList<>();
+        boolean changed = false;
+        for (String entry : cfg.onlyItems) {
+            List<String> resolved = resolveItem(entry, data);
+            boolean exact = resolved.size() == 1 && normalize(resolved.get(0)).equals(normalize(entry));
+            if (exact || resolved.isEmpty() || resolved.size() > MAX_MATCHES) {
+                if (!fixed.contains(entry)) {
+                    fixed.add(entry);
+                }
+                continue;
+            }
+            for (String name : resolved) {
+                if (fixed.stream().noneMatch(f -> normalize(f).equals(normalize(name)))) {
+                    fixed.add(name);
+                }
+            }
+            changed = true;
+            System.out.println("[Flipper] Item-Modus: '" + entry + "' -> " + resolved);
+        }
+        if (changed) {
+            cfg.onlyItems = fixed;
+            cfg.save();
+        }
     }
 
     /** Lower case letters, digits and single spaces only. */

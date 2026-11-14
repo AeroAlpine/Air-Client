@@ -50,12 +50,6 @@ public abstract class ItemHighlightMixin {
                 cir.setReturnValue(true);
                 return;
             }
-            // The keyPressed method now receives a KeyInput record object.
-            if (CoflModClient.uploadItemKeyBinding.matches(input)) {
-                if (hoveredSlot != null && hoveredSlot.hasItem()) {
-                    CoflModClient.uploadItem(hoveredSlot.getItem());
-                }
-            }
         } catch (Exception e) {
             System.out.println("[ItemHighlightMixin] keyPressed failed: " + e.getMessage());
         }
@@ -86,7 +80,8 @@ public abstract class ItemHighlightMixin {
                     }
                 }
             }
-            for (Slot slot : screen.getMenu().slots) {
+            // Cofl's coloured slot highlights are not drawn any more.
+            for (Slot slot : java.util.List.<Slot>of()) {
                 if (!slot.hasItem())
                     continue;
                 DescriptionHandler.DescModification[] tooltips = DescriptionHandler.getTooltipData(CoflModClient.getIdFromStack(slot.getItem()));

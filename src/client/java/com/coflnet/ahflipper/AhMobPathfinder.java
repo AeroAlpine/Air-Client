@@ -108,7 +108,11 @@ public final class AhMobPathfinder {
         EntityObstacles.setTarget(target);
         Player player = client.player;
         double distance = player.distanceTo(target);
-        if (distance <= config.reach) {
+        // In reach only counts with a free line: leaves between us and the mob block the hit,
+        // and standing there forever was the "stuck behind leaves" bug.
+        boolean canHit = distance <= config.reach
+                && VisibleGoal.seesAny(client.level, player.getEyePosition(), target);
+        if (canHit) {
             baritone.getCustomGoalProcess().onLostControl();
             baritone.getPathingBehavior().cancelEverything();
             lastGoalPos = null;
@@ -128,7 +132,7 @@ public final class AhMobPathfinder {
                 && RepathGate.mayRepath(player, lastGoalPos, goal, lastPathRequestAt, now);
         boolean idleRetry = !pathing && now - lastPathRequestAt > 500 && settled;
         if (firstPath || targetMoved || idleRetry) {
-            baritone.getCustomGoalProcess().setGoalAndPath(VisibleGoal.of(client.level, target, GOAL_RADIUS));
+            baritone.getCustomGoalProcess().setGoalAndPath(VisibleGoal.of(client.level, target, GOAL_RADIUS, config.reach));
             lastGoalPos = goal;
             lastPathRequestAt = now;
         }
@@ -140,7 +144,7 @@ public final class AhMobPathfinder {
                 if (stuckRepaths >= 2 && settled) {
                     // recalculate the path, keep the goal process (no full cancel)
                     baritone.getPathingBehavior().forceCancel();
-                    baritone.getCustomGoalProcess().setGoalAndPath(VisibleGoal.of(client.level, target, GOAL_RADIUS));
+                    baritone.getCustomGoalProcess().setGoalAndPath(VisibleGoal.of(client.level, target, GOAL_RADIUS, config.reach));
                     lastGoalPos = goal;
                     lastPathRequestAt = now;
                     stuckRepaths = 0;

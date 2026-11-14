@@ -382,7 +382,6 @@ public class AhFlipperMod {
                 .then(ClientCommands.literal("scan").executes(AhFlipperMod::scanCommand))
                 .then(ClientCommands.literal("stream").executes(AhFlipperMod::streamCommand))
                 .then(ClientCommands.literal("feed").executes(AhFlipperMod::streamCommand))
-                .then(ClientCommands.literal("automations").executes(AhFlipperMod::automationsCommand))
                 .then(ClientCommands.literal("invest").executes(AhFlipperMod::investmentCommand))
                 .then(ClientCommands.literal("investment").executes(AhFlipperMod::investmentCommand))
                 .then(ClientCommands.literal("skins").executes(AhFlipperMod::fireSaleCommand))
@@ -434,15 +433,8 @@ public class AhFlipperMod {
         }
         running = true;
         recon = true;
-        if (CONFIG.liveFeed) {
-            AhLiveScanner.start();
-        }
-        if (CONFIG.autoScan) {
-            AhScanner.start();
-        }
-        if (CONFIG.bidMacro) {
-            AhBidMacro.start();
-        }
+        // First claim and list what waits in "View Bids", then start flipping.
+        startAfterBidClaim();
         long oldest = System.currentTimeMillis() - LISTING_TASK_MAX_AGE_MS;
         synchronized (LISTING_QUEUE) {
             LISTING_QUEUE.removeIf(task -> task.at() < oldest);
@@ -451,6 +443,200 @@ public class AhFlipperMod {
         refreshActiveAuctionCountAsync();
         message("\u00a76[AH-Flipper] \u00a7aactive \u00a77(Live " + (CONFIG.liveFeed ? "\u00a7aon" : "\u00a7coff") + "\u00a77, Scanner " + (CONFIG.autoScan ? "\u00a7aon" : "\u00a7coff") + "\u00a77, Auto-Buy " + (autoBuy ? "\u00a7aon" : "\u00a7coff") + "\u00a77).");
         message("\u00a77Investment: \u00a7fF10 \u00a77\u00b7 Fire Sale: \u00a7fF8");
+    }
+
+    /** A won bid in "View Bids": what it is, what it is worth and what was paid. */
+    private record WonBid(String tag, String name, long value, long paid) {
+    }
+
+    private static void startAfterBidClaim() {
+        Thread thread = new Thread(() -> {
+            try {
+                claimAndListBids();
+            } catch (Exception e) {
+                System.out.println("[AH-Flipper] Start-Claim Fehler: " + e);
+            }
+            if (!running) {
+                return;
+            }
+            if (CONFIG.liveFeed) {
+                AhLiveScanner.start();
+            }
+            if (CONFIG.autoScan) {
+                AhScanner.start();
+            }
+            if (CONFIG.bidMacro) {
+                AhBidMacro.start();
+            }
+        }, "skycofl-ah-start-claim");
+        thread.setDaemon(true);
+        thread.start();
+    }
+
+    /**
+     * On start, before anything new is flipped: everything waiting in "View Bids" (won bids,
+     * also those of co-op members) is claimed - with "Claim All" when the menu has it - and
+     * every item that arrives is listed at the flipper's valuation.
+     */
+    private static void claimAndListBids() {
+        AutomationGate.Lease lease = AutomationGate.acquire("start-claim", false, 20_000L);
+        if (lease == null) {
+            System.out.println("[AH-Flipper] Start-Claim: AH ist belegt - übersprungen");
+            return;
+        }
+        ensureAhPriority();
+        try {
+            if (AhScreenUtil.currentScreen() != AhScreenUtil.AhScreen.NONE || AhScreenUtil.isContainerOpen()) {
+                ScreenUtil.closeAndWait(400);
+            }
+            sendCommand("/ah");
+            if (!waitForTitle(4000, "auction")) {
+                message("\u00a7eView Bids: AH did not open - skipped.");
+                return;
+            }
+            int button = -1;
+            long end = System.currentTimeMillis() + 2000;
+            while (button < 0 && running && System.currentTimeMillis() < end) {
+                button = findButtonOrText("view bids", "your bids", "manage bids");
+                if (button < 0) {
+                    ScreenUtil.sleep(50);
+                }
+            }
+            if (button < 0) {
+                System.out.println("[AH-Flipper] Start-Claim: kein View-Bids-Button (keine Gebote)");
+                ScreenUtil.closeCurrentScreen();
+                return;
+            }
+            ScreenUtil.clickSlot(button, 0);
+            if (!waitForClaimScreen(3500)) {
+                message("\u00a7eView Bids did not open - skipped.");
+                ScreenUtil.closeCurrentScreen();
+                return;
+            }
+            ScreenUtil.sleep(500);
+            java.util.List<WonBid> won = readWonBids();
+            int claimAll = ScreenUtil.findButton("claim all");
+            if (won.isEmpty() && claimAll < 0) {
+                message("\u00a77View Bids: nothing to claim.");
+                ScreenUtil.closeCurrentScreen();
+                return;
+            }
+            int[] baselines = new int[won.size()];
+            for (int i = 0; i < won.size(); i++) {
+                baselines[i] = AhScreenUtil.countInventoryMatches(won.get(i).tag(), won.get(i).name());
+            }
+            if (claimAll >= 0) {
+                ScreenUtil.middleClickSlot(claimAll);
+                ScreenUtil.sleep(900);
+                if (ScreenUtil.findButton("claim all") == claimAll) {
+                    ScreenUtil.clickSlot(claimAll, 0); // in case the menu ignored the middle click
+                    ScreenUtil.sleep(900);
+                }
+                System.out.println("[AH-Flipper] Start-Claim: Claim All geklickt");
+            } else {
+                clickClaimableItems();
+            }
+            ScreenUtil.closeCurrentScreen();
+            int claimed = 0;
+            int queued = 0;
+            for (int i = 0; i < won.size(); i++) {
+                WonBid bid = won.get(i);
+                long until = System.currentTimeMillis() + 2500;
+                boolean arrived = false;
+                while (System.currentTimeMillis() < until) {
+                    if (AhScreenUtil.countInventoryMatches(bid.tag(), bid.name()) > baselines[i]) {
+                        arrived = true;
+                        break;
+                    }
+                    ScreenUtil.sleep(100);
+                }
+                if (!arrived) {
+                    continue;
+                }
+                claimed++;
+                if (bid.value() > 0) {
+                    enqueueListing(bid.tag(), bid.name(), bid.value(), bid.paid(), "");
+                    queued++;
+                } else {
+                    message("\u00a7eNo value for \u00a7f" + bid.name() + "\u00a7e - claimed, not listed.");
+                }
+            }
+            message("\u00a76[AH-Flipper] \u00a77View Bids: \u00a7f" + claimed + "\u00a77 claimed, \u00a7f"
+                    + queued + "\u00a77 queued for listing.");
+        } finally {
+            AutomationGate.release(lease);
+            releaseAhPriorityIfIdle();
+        }
+    }
+
+    /** Items in the open "Your Bids" menu that can be collected, with value and price paid. */
+    private static java.util.List<WonBid> readWonBids() {
+        record Entry(ItemStack stack, java.util.List<String> lore) {
+        }
+        java.util.List<Entry> entries = ScreenUtil.sync(() -> {
+            java.util.List<Entry> list = new java.util.ArrayList<>();
+            if (!(Minecraft.getInstance().gui.screen() instanceof AbstractContainerScreen<?> container)) {
+                return list;
+            }
+            int size = container.getMenu() instanceof net.minecraft.world.inventory.ChestMenu chest
+                    ? chest.getContainer().getContainerSize()
+                    : Math.max(0, container.getMenu().slots.size() - 36);
+            for (int i = 0; i < size; i++) {
+                ItemStack stack = container.getMenu().getSlot(i).getItem();
+                if (stack.isEmpty()) {
+                    continue;
+                }
+                java.util.List<String> lore = new java.util.ArrayList<>();
+                var component = stack.get(net.minecraft.core.component.DataComponents.LORE);
+                if (component != null) {
+                    for (Component line : component.lines()) {
+                        lore.add(ScreenUtil.cleanName(line.getString()));
+                    }
+                }
+                list.add(new Entry(stack.copy(), lore));
+            }
+            return list;
+        });
+        java.util.List<WonBid> result = new java.util.ArrayList<>();
+        if (entries == null) {
+            return result;
+        }
+        for (Entry entry : entries) {
+            String name = ScreenUtil.cleanName(entry.stack().getHoverName().getString());
+            String lowerName = name.toLowerCase(java.util.Locale.ROOT);
+            if (lowerName.contains("claim all") || lowerName.contains("go back") || lowerName.equals("close")) {
+                continue;
+            }
+            String lore = String.join("\n", entry.lore()).toLowerCase(java.util.Locale.ROOT);
+            boolean ended = lore.contains("status: ended") || lore.contains("ended!") || lore.contains("won")
+                    || lore.contains("click to claim") || lore.contains("click to collect")
+                    || lore.contains("pick up");
+            if (!ended || lore.contains("collect coins") || lore.contains("claim coins")) {
+                continue;
+            }
+            long paid = 0;
+            for (String line : entry.lore()) {
+                String lower = line.toLowerCase(java.util.Locale.ROOT);
+                if (lower.contains("top bid") || lower.contains("your bid") || lower.contains("highest bid")) {
+                    paid = AhScreenUtil.parseCoins(line);
+                    if (paid > 0) {
+                        break;
+                    }
+                }
+            }
+            AhItem item = AhItem.resolveCofl(entry.stack(), 2500);
+            long value = 0;
+            try {
+                value = AhValuation.estimate(item, "").estimated;
+            } catch (RuntimeException e) {
+                System.out.println("[AH-Flipper] Start-Claim: Bewertung fehlgeschlagen für " + name + ": " + e);
+            }
+            String tag = item.tag == null ? "" : item.tag;
+            System.out.println("[AH-Flipper] Start-Claim: " + name + " tag=" + tag + " wert=" + value + " bezahlt=" + paid);
+            result.add(new WonBid(tag, item.displayName == null || item.displayName.isBlank() ? name : item.displayName,
+                    value, paid));
+        }
+        return result;
     }
 
     private static void stop() {
@@ -2070,6 +2256,11 @@ public class AhFlipperMod {
         }
         AutomationGate.release(lease);
         releaseAhPriorityIfIdle();
+    }
+
+    /** An AH action (buy, claim, listing ...) is using the open menu right now. */
+    public static boolean isRunningGuiAction() {
+        return isBusy();
     }
 
     static boolean isBusy() {
@@ -3746,12 +3937,6 @@ public class AhFlipperMod {
             AhLiveScanner.stop();
             message("§6[AH-Flipper] §7Live-Feed §caus");
         }
-        return 1;
-    }
-
-    private static int automationsCommand(CommandContext<FabricClientCommandSource> context) {
-        net.minecraft.client.Minecraft client = net.minecraft.client.Minecraft.getInstance();
-        client.gui.setScreen(com.coflnet.gui.cofl.CoflSettingsScreen.create(client.gui.screen()));
         return 1;
     }
 

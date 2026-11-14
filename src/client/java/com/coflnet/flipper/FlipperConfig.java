@@ -116,21 +116,47 @@ public class FlipperConfig {
         return true;
     }
 
+    /**
+     * Item mode: adds the exact Bazaar product(s) meant by {@code value} ("recomb" ->
+     * "Recombobulator 3000") and reports in chat what was added. The typed text itself is never
+     * stored: buying, searching and order handling work with the real product name.
+     */
     public boolean addOnlyItem(String value) {
-        String display = value == null ? "" : value.trim();
-        if (display.isEmpty()) {
+        String typed = value == null ? "" : value.trim();
+        if (typed.isEmpty()) {
             return false;
         }
         if (onlyItems == null) {
             onlyItems = new ArrayList<>();
         }
-        String normalized = normalize(display);
-        for (String entry : onlyItems) {
-            if (normalize(entry).equals(normalized)) {
-                return false;
+        com.coflnet.flipper.trading.Trader trader = com.coflnet.flipper.trading.Trader.get();
+        List<String> resolved = com.coflnet.flipper.trading.BazaarLimits.resolveItem(typed,
+                trader == null ? null : trader.marketSnapshot());
+        String prefix = "\u00a76[Bazaar item mode] ";
+        if (resolved.isEmpty()) {
+            FlipperMod.message(prefix + "\u00a7cKein Bazaar-Item gefunden: \u00a7f" + typed);
+            return false;
+        }
+        if (resolved.size() > 8) {
+            FlipperMod.message(prefix + "\u00a7c" + resolved.size() + " Treffer f\u00fcr \u00a7f" + typed
+                    + "\u00a7c - genauer eingeben, z. B.: \u00a7f" + String.join(", ", resolved.subList(0, 5)));
+            return false;
+        }
+        List<String> added = new ArrayList<>();
+        for (String name : resolved) {
+            String normalized = normalize(name);
+            if (onlyItems.stream().noneMatch(entry -> normalize(entry).equals(normalized))) {
+                onlyItems.add(name);
+                added.add(name);
             }
         }
-        onlyItems.add(display);
+        if (added.isEmpty()) {
+            FlipperMod.message(prefix + "\u00a7eSchon in der Liste: \u00a7f" + String.join(", ", resolved));
+            return false;
+        }
+        boolean same = added.size() == 1 && normalize(added.get(0)).equals(normalize(typed));
+        FlipperMod.message(prefix + "\u00a7aHinzugef\u00fcgt: \u00a7f" + String.join(", ", added)
+                + (same ? "" : " \u00a77(aus '" + typed + "')"));
         return true;
     }
 

@@ -42,7 +42,6 @@ import org.lwjgl.glfw.GLFW;
 
 import com.coflnet.gui.RenderUtils;
 import com.coflnet.gui.cofl.CoflBinGUI;
-import com.coflnet.gui.cofl.CoflSettingsScreen;
 import com.coflnet.gui.tfm.TfmBinGUI;
 import com.google.gson.Gson;
 import com.google.gson.GsonBuilder;
@@ -122,9 +121,11 @@ public class CoflModClient implements ClientModInitializer {
     private static int counter = 0;
     private static final KeyMapping.Category SKYCOFL_CATEGORY = KeyMapping.Category.register(Identifier.fromNamespaceAndPath("coflnet", "skycofl"));
     private static final KeyMapping.Category SKYCOFL_UNCHANGEABLE_CATEGORY = KeyMapping.Category.register(Identifier.fromNamespaceAndPath("coflnet", "skycofl_unchangeable"));
-    public static KeyMapping bestflipsKeyBinding;
-    public static KeyMapping uploadItemKeyBinding;
-    public static KeyMapping openSettingsKeyBinding;
+    /**
+     * Set only while the AH flipper reads an item's values: then the Cofl lines are added to the
+     * tooltip it collects. Shown tooltips never get them.
+     */
+    public static volatile boolean collectingCoflTooltip;
     public static List<KeyMapping> additionalKeyBindings = new ArrayList<KeyMapping>();
     public static Map<KeyMapping, HotkeyRegister> keybindingsToHotkeys = new HashMap<KeyMapping, HotkeyRegister>();
     public static final Set<String> knownIds = ConcurrentHashMap.newKeySet();
@@ -236,22 +237,6 @@ public class CoflModClient implements ClientModInitializer {
             RenderUtils.init();
         });
 
-        bestflipsKeyBinding = KeyMappingHelper.registerKeyMapping(new KeyMapping(
-                "keybinding.coflmod.bestflips",
-                InputConstants.Type.KEYSYM,
-                GLFW.GLFW_KEY_B,
-                SKYCOFL_CATEGORY));
-        uploadItemKeyBinding = KeyMappingHelper.registerKeyMapping(new KeyMapping(
-                "keybinding.coflmod.uploaditem",
-                InputConstants.Type.KEYSYM,
-                GLFW.GLFW_KEY_I,
-                SKYCOFL_CATEGORY));
-        openSettingsKeyBinding = KeyMappingHelper.registerKeyMapping(new KeyMapping(
-            "keybinding.coflmod.opensettings",
-            InputConstants.Type.KEYSYM,
-            GLFW.GLFW_KEY_O,
-            SKYCOFL_CATEGORY));
-
         ClientTickEvents.END_CLIENT_TICK.register(client -> {
             // Process scoreboard updates if dirty flag is set (set by ScoreboardMixin)
             if (scoreboardDirty && client.player != null) {
@@ -275,45 +260,7 @@ public class CoflModClient implements ClientModInitializer {
                 }
             }
 
-            if (bestflipsKeyBinding.isDown()) {
-                if (counter == 0) {
-                    EventRegistry.onOpenBestFlip(username, true);
-                }
-                if (counter < 2)
-                    counter++;
-            } else {
-                counter = 0;
-            }
-
-            if(uploadItemKeyBinding.consumeClick())
-                handleGetHoveredItem(client);
-
-            if (openSettingsKeyBinding.consumeClick()) {
-                CoflSkyCommand.processCommand(new String[]{"get", "json"}, username);
-                try {
-                    client.gui.setScreen(CoflSettingsScreen.create(client.gui.screen()));
-                } catch (Throwable t) {
-                    sendChatMessage("§cFailed to open settings GUI. YACL is missing or failed to load (please add the lastest version of YACL mod to your mods).");
-                    System.out.println("Failed to open settings GUI: " + t.getMessage());
-                    t.printStackTrace();
-                }
-            }
-
-            if (additionalKeyBindings == null) return;
-            try{
-                for (KeyMapping additionalKeyBinding : additionalKeyBindings) {
-                    if(additionalKeyBinding.consumeClick()){
-                        String keyName = keybindingsToHotkeys.get(additionalKeyBinding).Name;
-                        String toAppend = getContextToAppend(client.player.getInventory().getItem(client.player.getInventory().getSelectedSlot()));
-
-                        System.out.println("Exec hotkey "+ keyName + toAppend);
-                        CoflSkyCommand.processCommand(new String[]{"hotkey", keyName+toAppend},
-                                Minecraft.getInstance().getUser().getName());
-                    }
-                }
-            } catch (ConcurrentModificationException e) {
-                System.out.println("Additional Keybindings currently in use somewhere else, retrying...");
-            }
+            // Cofl's hotkeys (best flip, upload item, settings, server hotkeys) are gone.
         });
 
         ClientPlayConnectionEvents.JOIN.register((handler, sender, server) -> {
@@ -348,60 +295,7 @@ public class CoflModClient implements ClientModInitializer {
             }
         });
 
-        ClientCommandRegistrationCallback.EVENT.register((dispatcher, registryAccess) -> {
-            registerDefaultCommands(dispatcher, "air");
-            registerDefaultCommands(dispatcher, "cl");
-
-
-
-            dispatcher.register(ClientCommands.literal("fc")
-                .executes(context -> {
-                    // /fc with no arguments (toggles the chat server side)
-                    CoflSkyCommand.processCommand(new String[]{"chat"}, username);
-                    return 1;
-                })
-                .then(ClientCommands.literal("toggle")
-                    .executes(context -> {
-                        // /fc toggle - toggles flipper chat only mode
-                        flipperChatOnlyMode = !flipperChatOnlyMode;
-                        String message = flipperChatOnlyMode ?
-                            "§aFlipper Chat Only Mode enabled. All messages will be sent to flipper chat." :
-                            "§cFlipper Chat Only Mode disabled.";
-                        sendChatMessage(message);
-                        return 1;
-                    })
-                )
-                .then(ClientCommands.argument("args", StringArgumentType.greedyString())
-                    .suggests((context, builder) -> {
-                        String[] suggestions = {":tableflip:", ":sad:", ":smile:", ":grin:", ":heart:", ":skull:", ":airplane:", ":check:", "<3",
-                                ":star:", ":yes:", ":no:", ":java:", ":arrow", ":shrug:", "o/", ":123:", ":totem:", ":typing:",
-                                ":maths:", ":snail:", ":thinking:", ":gimme:", ":wizard:", ":pvp:", ":peace:", ":oof:", ":puffer:",
-                                ":yey:", ":cat:", ":dab:", ":dj:", ":snow:", ":^_^:", ":^-^:", ":sloth:", ":cute:", ":dog:",
-                                ":fyou:", ":angwyflip:", ":snipe:", ":preapi:", ":tm:", ":r:", ":c:", ":crown:", ":fire:",
-                                ":sword:", ":shield:", ":cross:", ":star1:", ":star2:", ":star3:", ":star4:", ":rich:", ":boop:",
-                                ":yay:", ":gg:"};
-                        String input = context.getInput();
-                        String[] inputParts = input.split(" ");
-                        String currentWord = inputParts.length > 0 ? inputParts[inputParts.length - 1] : "";
-
-                        for (String suggestion : suggestions) {
-                            if (suggestion.toLowerCase().startsWith(currentWord.toLowerCase())) {
-                                builder.suggest(suggestion, new TooltipMessage("Will be replaced with the emoji"));
-                            }
-                        }
-                        return builder.buildFuture();
-                    })
-                    .executes(context -> {
-                        String[] args = context.getArgument("args", String.class).split(" ");
-                        String[] newArgs = new String[args.length + 1];
-                        System.arraycopy(args, 0, newArgs, 1, args.length);
-                        newArgs[0] = "chat";
-                        CoflSkyCommand.processCommand(newArgs, username);
-                        return 1;
-                    })
-                )
-            );
-        });
+        ClientCommandRegistrationCallback.EVENT.register((dispatcher, registryAccess) -> registerAirCommand(dispatcher));
 
         // General screen event to check for account switches in menus
         ScreenEvents.AFTER_INIT.register((client, screen, scaledWidth, scaledHeight) -> {
@@ -447,6 +341,11 @@ public class CoflModClient implements ClientModInitializer {
                     loadDescriptionsForInv(hs);
                 knownIds.add(stackId);
                 System.out.println("Missing descriptions for " + stackId);
+                return;
+            }
+
+            // Cofl price lines are only added for the AH flipper's own value reading.
+            if (!collectingCoflTooltip) {
                 return;
             }
 
@@ -499,8 +398,6 @@ public class CoflModClient implements ClientModInitializer {
                 }
             }
 
-            // Add sell protection warnings to tooltips
-            addSellProtectionTooltip(stack, lines);
         });
 
         HudElementRegistry.addLast(Identifier.fromNamespaceAndPath("coflnet", "countdown_hud"), (drawContext, tickCounter) -> {
@@ -681,217 +578,33 @@ public class CoflModClient implements ClientModInitializer {
         return render + "s";
     }
 
-    private void registerDefaultCommands(CommandDispatcher<FabricClientCommandSource> dispatcher, String name) {
-        dispatcher.register(ClientCommands.literal(name)
+    /**
+     * The own /air command. Cofl's commands (forwarded to its server: protections, blacklist,
+     * login, flip chat ...) are gone; only the client's own access check is left.
+     */
+    private void registerAirCommand(CommandDispatcher<FabricClientCommandSource> dispatcher) {
+        dispatcher.register(ClientCommands.literal("air")
                 .executes(context -> {
-                    Minecraft client = Minecraft.getInstance();
-                    if (!coflInfoShown) {
-                        coflInfoShown = true;
-                        sendChatMessage("§6§l=== Air Client ===");
-                        sendChatMessage("§7Real-time market data, price checking, flip finding, and more.");
-                        sendChatMessage("§eUse §a/air help §efor a list of available commands.");
-                        sendChatMessage("§7Commands have §aautocompletion§7 - start typing to see suggestions.");
-                        sendChatMessage("§7Hover over suggestions for §amore information§7.");
-                    }
-                    // Open YACL settings UI if available (scheduled to next tick so chat screen closes first)
-                    client.execute(() -> {
-                        try {
-                            CoflSkyCommand.processCommand(new String[]{"get", "json"}, username);
-                            client.gui.setScreen(CoflSettingsScreen.create(client.gui.screen()));
-                        } catch (Throwable t) {
-                            sendChatMessage("§7Install §eYACL §7mod to access the settings GUI with §a/air§7.");
-                        }
-                    });
+                    sendChatMessage("§6Air Client §7- §f/air access §7shows your access level.");
                     return 1;
                 })
-                .then(ClientCommands.argument("args", StringArgumentType.greedyString())
-                .suggests((context, builder) -> {
-                    String input = context.getInput();
-                    String[] inputArgs = input.split(" ");;
-                    String currentWord = inputArgs.length > 0 ? inputArgs[inputArgs.length - 1] : "";
+                .then(ClientCommands.literal("access").executes(context -> showAccess()))
+                .then(ClientCommands.literal("status").executes(context -> showAccess())));
+    }
 
-                    // Check if the command is "s" or "set" and suggest specific subcommands
-                    if (inputArgs.length == 2 && (input.contains("set ") || input.equals("s "))
-                        || inputArgs.length == 3 && (inputArgs[1].equals("s") || inputArgs[1].equals("set"))) {
-                        if("sellprotectionenabled".contains(currentWord.toLowerCase()) || currentWord.equals("set"))
-                            builder.suggest("set sellProtectionEnabled", new Message() {
-                                @Override
-                                public String getString() {
-                                    return "Enable or disable sell protection (true/false)";
-                                }
-                            });
-                        if("sellprotectionthreshold".contains(currentWord.toLowerCase()) || currentWord.equals("set"))
-                            builder.suggest("set sellProtectionThreshold", new Message() {
-                                @Override
-                                public String getString() {
-                                    return "Set max coin amount before sell protection blocks sells (e.g. 1000, 2k, 3m)";
-                                }
-                            });
-                        if("angrycoopprotectionenabled".contains(currentWord.toLowerCase()) || currentWord.equals("set"))
-                            builder.suggest("set angryCoopProtectionEnabled", new Message() {
-                                @Override
-                                public String getString() {
-                                    return "Enable or disable angry co-op protection (true/false)";
-                                }
-                            });
-                        for (Settings suggestion : CoflCore.config.knownSettings) {
-                            if (suggestion.getSettingKey().toLowerCase().contains(currentWord.toLowerCase()) || currentWord.equals("set") || currentWord.equals("s")) {
-                                String settingInfo = suggestion.getSettingInfo();
-                                if (settingInfo == null) {
-                                    builder.suggest("set " + suggestion.getSettingKey());
-                                } else {
-                                    builder.suggest("set " + suggestion.getSettingKey(), new Message() {
-                                        @Override
-                                        public String getString() {
-                                            return settingInfo;
-                                        }
-                                    });
-                                }
-                            }
-                        }
-                    } else if(inputArgs.length > 3)
-                        return builder.buildFuture();
-                    else {
-                        if (inputArgs.length <= 2 && "access".startsWith(currentWord.toLowerCase())) {
-                            builder.suggest("access");
-                        }
-                        if (inputArgs.length <= 2 && "status".startsWith(currentWord.toLowerCase())) {
-                            builder.suggest("status");
-                        }
-                        if(CoflCore.config.knownCommands == null)
-                        {
-                            System.out.println("No known commands loaded yet, cannot suggest");
-                            return builder.buildFuture();
-                        }
-                        for (String suggestion : CoflCore.config.knownCommands.keySet()) {
-                            if (suggestion.toLowerCase().startsWith(currentWord.toLowerCase())
-                                    || inputArgs.length == 1 // just typing the command should show all
-                            ){
-                                String messageText = CoflCore.config.knownCommands.get(suggestion);
-                                if(messageText == null)
-                                    builder.suggest(suggestion);
-                                else
-                                    builder.suggest(suggestion, new Message() {
-                                        @Override
-                                        public String getString() {
-                                            // Replace line breaks with spaces for single-line display
-                                            String[] parts = messageText.split("\n");
-                                            return parts.length > 0 ? parts[0] : "";
-                                        }
-                                    });
-                            }
-                        }
-                    }
-                    return builder.buildFuture();
-                })
-                .executes(context -> {
-                    String[] args = context.getArgument("args", String.class).split(" ");
-
-                    // Handle sell protection commands locally
-                    if (args.length >= 2 && args[0].equals("set")) {
-                        if (args[1].equals("sellProtectionEnabled")) {
-                            if (args.length >= 3) {
-                                boolean enabled = args[2].equalsIgnoreCase("true") || args[2].equals("1");
-                                com.coflnet.config.SellProtectionManager.setEnabled(enabled);
-                                sendChatMessage("§aSell Protection " + (enabled ? "enabled" : "disabled"));
-                                return 1;
-                            } else {
-                                sendChatMessage("§cUsage: /air set sellProtectionEnabled <true/false>");
-                                return 1;
-                            }
-                        } else if (args[1].equals("sellProtectionThreshold")) {
-                            if (args.length >= 3) {
-                                try {
-                                    long amount = parseAmountString(args[2]);
-                                    com.coflnet.config.SellProtectionManager.setMaxAmount(amount);
-                                    sendChatMessage("§aSell Protection max amount set to " + formatCoins(amount) + " coins");
-                                    return 1;
-                                } catch (NumberFormatException e) {
-                                    sendChatMessage("§cInvalid number: " + args[2] + ". Use formats like: 1000, 2k, 3m, 1.5b");
-                                    return 1;
-                                }
-                            } else {
-                                sendChatMessage("§cUsage: /air set sellProtectionThreshold <amount>");
-                                sendChatMessage("§7Examples: 1000, 2k, 3m, 1.5b");
-                                return 1;
-                            }
-                        } else if (args[1].equals("angryCoopProtectionEnabled")) {
-                            if (args.length >= 3) {
-                                boolean enabled = args[2].equalsIgnoreCase("true") || args[2].equals("1");
-                                com.coflnet.config.AngryCoopProtectionManager.setEnabled(enabled);
-                                sendChatMessage("§aAngry Co-op Protection " + (enabled ? "enabled" : "disabled"));
-                                return 1;
-                            } else {
-                                sendChatMessage("§cUsage: /air set angryCoopProtectionEnabled <true/false>");
-                                return 1;
-                            }
-                        }
-                    } else if (args.length >= 1 && args[0].equals("sellprotection")) {
-                        if (args.length == 1) {
-                            // Show current settings
-                            com.coflnet.config.CoflModConfig config = com.coflnet.config.SellProtectionManager.getConfig();
-                            sendChatMessage("§6=== Sell Protection Settings ===");
-                            sendChatMessage("§7Enabled: " + (config.sellProtectionEnabled ? "§aYes" : "§cNo"));
-                            sendChatMessage("§7Max Amount: §6" + formatCoins(config.sellProtectionThreshold) + " coins");
-                            sendChatMessage("§7Usage: §e/air set sellProtectionEnabled <true/false>");
-                            sendChatMessage("§7Usage: §e/air set sellProtectionThreshold <amount>");
-                            sendChatMessage("§7Examples: §e1000§7, §e2k§7, §e3m§7, §e1.5b");
-                            return 1;
-                        }
-                    } else if (args.length >= 1 && args[0].equals("angrycoop")) {
-                        if (args.length == 1) {
-                            com.coflnet.config.CoflModConfig config = com.coflnet.config.AngryCoopProtectionManager.getConfig();
-                            sendChatMessage("§6=== Angry Co-op Protection Settings ===");
-                            sendChatMessage("§7Enabled: " + (config.angryCoopProtectionEnabled ? "§aYes" : "§cNo"));
-                            sendChatMessage("§7Usage: §e/air set angryCoopProtectionEnabled <true/false>");
-                            return 1;
-                        }
-                    }
-
-                    // Local access check (no names are printed)
-                    if (args.length >= 1
-                            && (args[0].equalsIgnoreCase("access") || args[0].equalsIgnoreCase("status"))) {
-                        boolean active = com.coflnet.ahflipper.PriorityAccess.isLocalPriority();
-                        sendChatMessage("§6=== Air Client Access ===");
-                        sendChatMessage(active ? "§aYou have priority access." : "§7You have standard access.");
-                        sendChatMessage("§7Action delay: §f"
-                                + (active ? "0" : com.coflnet.ahflipper.AhFlipperMod.CONFIG.standardDelayMs) + " ms");
-                        sendChatMessage("§7List: §f" + com.coflnet.ahflipper.PriorityAccess.source()
-                                + " §7(" + com.coflnet.ahflipper.PriorityAccess.size() + " entries)");
-                        long age = com.coflnet.ahflipper.PriorityAccess.lastRefreshAgeSeconds();
-                        if (age >= 0) {
-                            sendChatMessage("§7Updated: §f" + age + "s ago");
-                        }
-                        return 1;
-                    }
-
-                    // Special internal-only commands
-                    if (args.length >= 1 && args[0].equalsIgnoreCase("bazaarsearch")) {
-                        if (args.length >= 2) {
-                            // Join remaining args as the search term
-                            String[] part = new String[args.length - 1];
-                            System.arraycopy(args, 1, part, 0, part.length);
-                            String searchTerm = String.join(" ", part);
-                            searchInBazaarSmart(searchTerm);
-                            return 1;
-                        } else {
-                            sendChatMessage("§cUsage: /air bazaarsearch <item>");
-                            return 1;
-                        }
-                    }
-
-                    if (handlePendingConnectConfirmation(args, username)) {
-                        return 1;
-                    }
-
-                    if (queueUntrustedConnectConfirmation(args)) {
-                        return 1;
-                    }
-
-                    // Pass to CoflSkyCommand for other commands
-                    CoflSkyCommand.processCommand(args, username);
-                    return 1;
-                })));
+    private static int showAccess() {
+        boolean active = com.coflnet.ahflipper.PriorityAccess.isLocalPriority();
+        sendChatMessage("§6=== Air Client Access ===");
+        sendChatMessage(active ? "§aYou have priority access." : "§7You have standard access.");
+        sendChatMessage("§7Action delay: §f"
+                + (active ? "0" : com.coflnet.ahflipper.AhFlipperMod.CONFIG.standardDelayMs) + " ms");
+        sendChatMessage("§7List: §f" + com.coflnet.ahflipper.PriorityAccess.source()
+                + " §7(" + com.coflnet.ahflipper.PriorityAccess.size() + " entries)");
+        long age = com.coflnet.ahflipper.PriorityAccess.lastRefreshAgeSeconds();
+        if (age >= 0) {
+            sendChatMessage("§7Updated: §f" + age + "s ago");
+        }
+        return 1;
     }
 
     private void handleGetHoveredItem(Minecraft client) {
@@ -1824,74 +1537,6 @@ public class CoflModClient implements ClientModInitializer {
         }
 
         return result;
-    }
-
-    /**
-     * Adds sell protection warnings to item tooltips
-     */
-    private static void addSellProtectionTooltip(ItemStack stack, List<Component> lines) {
-        try {
-            // Check if sell protection is enabled
-            if (!com.coflnet.config.SellProtectionManager.isEnabled()) {
-                return;
-            }
-
-            // Check if we're in a screen with "➜" in title
-            Minecraft client = Minecraft.getInstance();
-            if (client.gui.screen() instanceof AbstractContainerScreen<?> screen) {
-                String screenTitle = screen.getTitle().getString();
-                if (!screenTitle.contains("➜")) {
-                    return;
-                }
-            } else {
-                return;
-            }
-
-            String itemName = "";
-            if (stack.getCustomName() != null) {
-                itemName = stack.getCustomName().getString();
-            } else {
-                itemName = stack.getItem().getName(stack).getString();
-            }
-
-            // Get threshold for comparison
-            long threshold = com.coflnet.config.SellProtectionManager.getMaxAmount();
-            String formattedThreshold = formatCoins(threshold);
-
-            // Extract coin amount and only show warning if over threshold
-            long sellAmount = 0;
-            boolean shouldShowWarning = false;
-
-            if (itemName.contains("Sell Instantly")) {
-                sellAmount = com.coflnet.utils.SellAmountParser.extractSellInstantlyAmountFromTooltip(lines);
-                // Only show warning if we successfully parsed an amount and it's over threshold
-                // Don't show warning for the default protection amount (Long.MAX_VALUE)
-                shouldShowWarning = sellAmount > threshold && sellAmount != com.coflnet.utils.SellAmountParser.getDefaultProtectionAmount();
-
-                if (shouldShowWarning) {
-                    lines.add(Component.literal(""));
-                    lines.add(Component.literal("§c⚠ §lSell Protection §c⚠"));
-                    lines.add(Component.literal("§7Left clicks blocked if > §6" + formattedThreshold + " coins"));
-                    lines.add(Component.literal("§bHold Ctrl§7 to override."));
-                    lines.add(Component.literal("§8/air set sellProtectionThreshold <amount>"));
-                }
-            } else if (itemName.contains("Sell Sacks Now") || itemName.contains("Sell Inventory Now")) {
-                sellAmount = com.coflnet.utils.SellAmountParser.extractInventorySackAmountFromTooltip(lines);
-                // Only show warning if we successfully parsed an amount and it's over threshold
-                // Don't show warning for the default protection amount (Long.MAX_VALUE)
-                shouldShowWarning = sellAmount > threshold && sellAmount != com.coflnet.utils.SellAmountParser.getDefaultProtectionAmount();
-
-                if (shouldShowWarning) {
-                    lines.add(Component.literal(""));
-                    lines.add(Component.literal("§c⚠ §lSell Protection §c⚠"));
-                    lines.add(Component.literal("§7All clicks blocked if > §6" + formattedThreshold + " coins"));
-                    lines.add(Component.literal("§bHold Ctrl§7 to override."));
-                    lines.add(Component.literal("§8/air set sellProtectionThreshold <amount>"));
-                }
-            }
-        } catch (Exception e) {
-            System.out.println("[CoflModClient] addSellProtectionTooltip failed: " + e.getMessage());
-        }
     }
 
     /**
