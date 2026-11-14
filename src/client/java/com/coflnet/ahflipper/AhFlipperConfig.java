@@ -107,6 +107,8 @@ public class AhFlipperConfig {
     public int bidMacroMaxBidsPerScan = 15;
     public double bidMacroMaxBankrollFraction = 0.8;
     public boolean bidMacroAutoList = true;
+    /** Wait before the bid is submitted (ms, 0 = none), with a random +-1 ms offset. */
+    public int bidMacroDelayMs = 0;
     public boolean investmentGui = true;
     public long investmentMaxBuyPrice = 100_000L;
     public long investmentMinPrice = 1_000L;

@@ -244,8 +244,14 @@ public final class LowballingGui {
             }
             List<Component> tooltip = stack.getTooltipLines(Item.TooltipContext.EMPTY,
                     Minecraft.getInstance().player, TooltipFlag.NORMAL);
-            ItemTooltipCallback.EVENT.invoker().getTooltip(stack,
-                    Item.TooltipContext.EMPTY, TooltipFlag.NORMAL, tooltip);
+            // Cofl LBin/Median lines are hidden in shown tooltips but needed here.
+            com.coflnet.CoflModClient.collectingCoflTooltip = true;
+            try {
+                ItemTooltipCallback.EVENT.invoker().getTooltip(stack,
+                        Item.TooltipContext.EMPTY, TooltipFlag.NORMAL, tooltip);
+            } finally {
+                com.coflnet.CoflModClient.collectingCoflTooltip = false;
+            }
             List<String> result = new ArrayList<>();
             for (Component line : tooltip) {
                 result.add(line.getString());

@@ -46,6 +46,14 @@ public class ItemNames {
         }
     }
 
+    /** Every known Bazaar product: product id -> display name. */
+    public static Map<String, String> allProducts() {
+        if (PRODUCT_TO_NAME.isEmpty()) {
+            load();
+        }
+        return java.util.Collections.unmodifiableMap(PRODUCT_TO_NAME);
+    }
+
     public static String displayName(String productId) {
         String mapped = PRODUCT_TO_NAME.get(productId);
         if (mapped != null) {

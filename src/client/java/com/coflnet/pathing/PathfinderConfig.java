@@ -53,6 +53,12 @@ public final class PathfinderConfig {
     public boolean avoidStandingEntities = true;
     /** After a server setback: no parkour / sprint jumps for a while and in that area. */
     public boolean setbackGuard = true;
+    /** Path recorder: every pathing run is written to logs/pathfinder (plan vs. what happened). */
+    public boolean recordPaths = true;
+    /** One summary line in chat after each recorded run. */
+    public boolean recorderChat = true;
+    /** Most degrees the walking direction / server rotation may turn per tick (0 = unlimited). */
+    public double maxTurnPerTick = 40.0;
 
     /** Bumped when defaults change; older files (no field = 0) get the new defaults once. */
     public int configVersion;

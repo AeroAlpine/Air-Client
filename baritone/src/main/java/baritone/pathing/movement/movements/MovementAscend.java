@@ -122,7 +122,10 @@ public class MovementAscend extends Movement {
             return COST_INF;// the only thing we can ascend onto from a bottom slab is another bottom slab
         }
         double walk;
-        if (jumpingToBottomSlab) {
+        if (MovementHelper.isStairStepUp(toPlace, destX - x, destZ - z)) {
+            // Air Client: walking up a stair is two half steps, no jump and no jump penalty
+            walk = WALK_ONE_BLOCK_COST;
+        } else if (jumpingToBottomSlab) {
             if (jumpingFromBottomSlab) {
                 walk = Math.max(JUMP_ONE_BLOCK_COST, WALK_ONE_BLOCK_COST); // we hit space immediately on entering this action
                 walk += context.jumpPenalty;
@@ -184,7 +187,7 @@ public class MovementAscend extends Movement {
             if (landed()) {
                 return state.setStatus(MovementStatus.SUCCESS);
             }
-            MovementHelper.moveTowards(ctx, state, dest);
+            MovementHelper.steerWhileLanding(ctx, state, src, dest);
             return state;
         }
 
@@ -210,6 +213,11 @@ public class MovementAscend extends Movement {
 
         if (MovementHelper.isBottomSlab(jumpingOnto) && !MovementHelper.isBottomSlab(BlockStateInterface.get(ctx, src.below()))) {
             return state; // don't jump while walking from a non double slab into a bottom slab
+        }
+
+        if (MovementHelper.isStairStepUp(jumpingOnto, dest.getX() - src.getX(), dest.getZ() - src.getZ())) {
+            // Air Client: stairs are walked up. Jumping on every step hopped and stuttered.
+            return state;
         }
 
         if (Baritone.settings().assumeStep.value || ctx.playerFeet().equals(src.above())) {

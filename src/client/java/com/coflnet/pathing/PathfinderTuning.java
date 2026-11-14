@@ -39,6 +39,7 @@ public final class PathfinderTuning {
         s.allowSprint.value = s.allowSprint.value && config.allowSprint;
         s.costHeuristic.value = config.costHeuristic;
         s.movementTimeoutTicks.value = config.movementTimeoutTicks;
+        s.maxYawChangePerTick.value = (float) Math.max(0.0, config.maxTurnPerTick);
         s.failureTimeoutMS.value = config.failureTimeoutMs;
         s.planAheadFailureTimeoutMS.value = Math.max(config.failureTimeoutMs, 4000L);
         // Keep a gap to edges / walls when there is room (patched Baritone, EdgeSafety).

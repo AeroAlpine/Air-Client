@@ -107,6 +107,8 @@ public final class AutoExperimentTable {
     private static long waitUntil;
     private static long lastProgressAt;
     private static long lastClickAt;
+    /** Wait before the next menu click: the click delay with its ±1 ms offset, drawn per click. */
+    private static long nextClickGapMs = CONFIG.clickDelayMs;
     private static PendingClick pending;
     /** Finished or stopped while a menu was open: wait for it to close before arming again. */
     private static boolean ignoreUntilClosed;
@@ -132,18 +134,29 @@ public final class AutoExperimentTable {
 
     // Chronomatron / Ultrasequencer
     private static Phase lastPhase = Phase.UNKNOWN;
-    private static final List<String> recordedColors = new ArrayList<>();
-    private static String lastLitColor;
+    /** Chronomatron: slot of every note lit during the current replay, in order. */
+    private static final List<Integer> showSlots = new ArrayList<>();
     private static final TreeMap<Integer, Integer> recordedNumbers = new TreeMap<>();
     private static final List<Integer> playSlots = new ArrayList<>();
-    private static final List<String> playColors = new ArrayList<>();
+    /** Chronomatron: the sequence to play, as the slots that lit up. */
+    private static final List<Integer> chronoSlots = new ArrayList<>();
     private static int inputIndex;
     private static long chronoInputSince;
-    /** Ticks in a row without a lit note; a short blink must not count as a second note. */
-    private static int chronoDarkTicks;
+    /** The note lit right now during the replay, -1 when the board is dark. */
+    private static int chronoLitSlot = -1;
+    private static String chronoLitKey;
+    private static long chronoNextClickAt;
+    /** When the current replay started, and the note we clicked last (it may still glow then). */
+    private static long chronoShowSince;
+    private static String chronoLastClickedKey;
+    /** Our own last click can light up a moment after the replay started: ignored this long. */
+    private static final long CHRONO_ECHO_MS = 350;
     private static long chronoGameStart;
     private static String chronoDiag = "";
-    private static final int CHRONO_GAP_TICKS = 2;
+    /** Gap between two note clicks; Hypixel drops notes clicked faster. */
+    private static final long CHRONO_CLICK_GAP_MS = 200;
+    /** The newest note may still be lit when our turn starts: wait up to this long for it to go dark. */
+    private static final long CHRONO_FIRST_CLICK_WAIT_MS = 600;
     private static final List<String> COLOR_PREFIXES = List.of(
             "light_blue_", "light_gray_", "white_", "orange_", "magenta_", "yellow_", "lime_", "pink_",
             "gray_", "cyan_", "purple_", "blue_", "brown_", "green_", "red_", "black_");
@@ -560,11 +573,15 @@ public final class AutoExperimentTable {
 
     private static void startGame(long now) {
         lastPhase = Phase.UNKNOWN;
-        recordedColors.clear();
+        showSlots.clear();
         recordedNumbers.clear();
         playSlots.clear();
-        playColors.clear();
-        lastLitColor = null;
+        chronoSlots.clear();
+        chronoLitSlot = -1;
+        chronoLitKey = null;
+        chronoNextClickAt = 0;
+        chronoShowSince = 0;
+        chronoLastClickedKey = null;
         inputIndex = 0;
         completedRounds = 0;
         board.clear();
@@ -574,7 +591,6 @@ public final class AutoExperimentTable {
         firstSlot = -1;
         firstKey = null;
         plannedSecond = -1;
-        chronoDarkTicks = 0;
         chronoGameStart = now;
         chronoDiag = "";
         setStage(Stage.GAME, now);
@@ -612,30 +628,34 @@ public final class AutoExperimentTable {
         }
     }
 
+    /**
+     * Simon says. A lit note is a block with the enchantment glint (Hypixel turns the note's
+     * glass into glinting terracotta). Each round the replay shows the whole sequence plus one
+     * new note; that new note is still lit when the clock appears, so it is read right at the
+     * start of our turn, even if the replay itself was missed (the first one plays while the menu
+     * opens). The notes are clicked on the exact slots that lit up, each exactly once: a repeated
+     * click would be a wrong note, so there is no retry.
+     */
     private static void tickChronomatron(long now) {
         Phase phase = phase();
-        String lit = litColor();
+        int lit = litSlot();
         logChronoState(now, phase, lit);
         if (phase == Phase.SHOW) {
             if (lastPhase != Phase.SHOW) {
                 if (roundFinished()) {
                     return;
                 }
-                recordedColors.clear();
-                lastLitColor = null;
-                chronoDarkTicks = CHRONO_GAP_TICKS;
+                showSlots.clear();
+                chronoShowSince = now;
+                // A note lit right now is our own last click still glowing, not part of the replay.
+                chronoLitSlot = lit;
+                chronoLitKey = lit >= 0 ? noteKey(lit) : null;
+                if (lit >= 0) {
+                    log("Chrono: Slot " + lit + " leuchtet noch vom eigenen Klick - ignoriert");
+                }
                 logChronoBoard(now);
             }
-            if (lit == null) {
-                chronoDarkTicks++;
-            } else {
-                // A new note: another colour, or the same one after a real dark gap.
-                if (!lit.equals(lastLitColor) || chronoDarkTicks >= CHRONO_GAP_TICKS) {
-                    recordedColors.add(lit);
-                }
-                lastLitColor = lit;
-                chronoDarkTicks = 0;
-            }
+            trackChronoNote(now, lit);
             lastPhase = Phase.SHOW;
             return;
         }
@@ -643,39 +663,114 @@ public final class AutoExperimentTable {
             return;
         }
         if (lastPhase != Phase.INPUT) {
-            // Simon says: the sequence we already played plus the note shown last.
-            // Only the newest note has to be read right; missed or doubled earlier notes do not matter.
-            log("Chronomatron gesehen: " + recordedColors);
-            int expected = playColors.size() + 1;
-            if (recordedColors.size() == expected) {
-                // Whole replay seen with the right length: trust it over our own history.
-                playColors.clear();
-                playColors.addAll(recordedColors);
-            } else if (!recordedColors.isEmpty()) {
-                playColors.add(recordedColors.getLast());
-            } else {
-                log("Chronomatron: keine neue Note erkannt");
+            startChronoInput(now, lit);
+        }
+        if (inputIndex >= chronoSlots.size() || now < chronoNextClickAt) {
+            return;
+        }
+        if (inputIndex == 0 && lit >= 0 && now - chronoInputSince < CHRONO_FIRST_CLICK_WAIT_MS) {
+            return;
+        }
+        int slot = chronoSlots.get(inputIndex);
+        log("Chronomatron Klick " + (inputIndex + 1) + "/" + chronoSlots.size() + ": Slot " + slot
+                + " (" + nameAt(slot) + ")");
+        clickRaw(slot, false);
+        chronoLastClickedKey = noteKey(slot);
+        lastClickAt = now;
+        lastProgressAt = now;
+        inputIndex++;
+        chronoNextClickAt = now + jitter(Math.max(CHRONO_CLICK_GAP_MS, CONFIG.clickDelayMs));
+    }
+
+    /** One replay note = the board going from dark (or another note) to a lit note. */
+    private static void trackChronoNote(long now, int lit) {
+        String key = lit >= 0 ? noteKey(lit) : null;
+        if (chronoLitSlot >= 0) {
+            if (key != null && key.equals(chronoLitKey)) {
+                return; // the same note is still lit
             }
-            inputIndex = 0;
-            lastPhase = Phase.INPUT;
-            chronoInputSince = now;
-            log("Chronomatron Runde " + playColors.size() + ": " + playColors);
+            chronoLitSlot = -1;
+            chronoLitKey = null;
         }
-        if (inputIndex >= playColors.size()) {
+        if (lit < 0) {
             return;
         }
-        // Wait until the last note went dark again: else the click may be lost, and the
-        // fading note would look like the reaction to our click.
-        if (lit != null && now - Math.max(lastClickAt, chronoInputSince) < 2_000) {
+        chronoLitSlot = lit;
+        chronoLitKey = key;
+        if (showSlots.isEmpty() && key.equals(chronoLastClickedKey) && now - chronoShowSince < CHRONO_ECHO_MS) {
+            log("Chrono: Slot " + lit + " ist das Echo des eigenen Klicks - ignoriert");
             return;
         }
-        int slot = slotForColor(playColors.get(inputIndex));
-        if (slot < 0) {
-            log("Farbe " + playColors.get(inputIndex) + " nicht auf dem Feld");
-            inputIndex++;
-            return;
+        showSlots.add(lit);
+        log("Chrono Note " + showSlots.size() + ": Slot " + lit + " " + describeSlot(lit));
+    }
+
+    /**
+     * Our turn started: add the note that is new in this round. Hypixel replays the known
+     * notes and lights the new one exactly when the timer appears, so a replay of the known
+     * length confirms (or corrects) our history, and the note lit now is the new one.
+     */
+    private static void startChronoInput(long now, int lit) {
+        int known = chronoSlots.size();
+        List<String> seen = new ArrayList<>();
+        for (int slot : showSlots) {
+            seen.add(slot + "=" + nameAt(slot));
         }
-        clickGameSlot(slot);
+        log("Chronomatron gesehen: " + seen + (lit >= 0 ? " | leuchtet noch: " + lit + "=" + nameAt(lit) : ""));
+        List<Integer> replay = new ArrayList<>(showSlots);
+        int newest = -1;
+        String source = "";
+        if (lit >= 0) {
+            newest = lit;
+            source = "leuchtet beim Timer-Start";
+            if (chronoLitSlot >= 0 && !replay.isEmpty() && noteKey(lit).equals(chronoLitKey)) {
+                // It lit up already in the replay and is still on: that event is this new note.
+                replay.removeLast();
+            }
+        } else if (replay.size() == known + 1) {
+            newest = replay.removeLast();
+            source = "letzte Note der Wiedergabe";
+        } else if (!replay.isEmpty()) {
+            newest = replay.getLast();
+            source = "letzte Note der Wiedergabe (Länge passt nicht)";
+            replay.clear();
+        }
+        if (replay.size() == known && known > 0) {
+            if (!sameNotes(replay, chronoSlots)) {
+                log("Chronomatron: Wiedergabe weicht vom Verlauf ab - nehme die Wiedergabe");
+            }
+            chronoSlots.clear();
+            chronoSlots.addAll(replay);
+        } else if (!replay.isEmpty()) {
+            log("Chronomatron: Wiedergabe hat " + replay.size() + " statt " + known + " Noten - behalte den Verlauf");
+        }
+        if (newest >= 0) {
+            chronoSlots.add(newest);
+            log("Chronomatron neue Note: Slot " + newest + " (" + nameAt(newest) + ", " + source + ")");
+        } else {
+            log("Chronomatron: keine neue Note erkannt");
+        }
+        inputIndex = 0;
+        lastPhase = Phase.INPUT;
+        chronoInputSince = now;
+        chronoNextClickAt = now + jitter(Math.max(CHRONO_CLICK_GAP_MS, CONFIG.clickDelayMs));
+        List<String> plan = new ArrayList<>();
+        for (int slot : chronoSlots) {
+            plan.add(slot + "=" + nameAt(slot));
+        }
+        log("Chronomatron Runde " + chronoSlots.size() + ": " + plan);
+    }
+
+    private static boolean sameNotes(List<Integer> a, List<Integer> b) {
+        if (a.size() != b.size()) {
+            return false;
+        }
+        for (int i = 0; i < a.size(); i++) {
+            if (!noteKey(a.get(i)).equals(noteKey(b.get(i)))) {
+                return false;
+            }
+        }
+        return true;
     }
 
     private static void tickUltrasequencer(long now) {
@@ -718,7 +813,7 @@ public final class AutoExperimentTable {
 
     /** Back in the show phase: was the last input complete, and is the round target reached? */
     private static boolean roundFinished() {
-        int played = game == Game.CHRONOMATRON ? playColors.size() : playSlots.size();
+        int played = game == Game.CHRONOMATRON ? chronoSlots.size() : playSlots.size();
         if (lastPhase == Phase.INPUT && played > 0 && inputIndex >= played) {
             completedRounds = played;
             int target = game == Game.CHRONOMATRON ? CONFIG.chronomatronRounds : CONFIG.ultrasequencerRounds;
@@ -981,14 +1076,16 @@ public final class AutoExperimentTable {
     }
 
     /**
-     * The colour whose blocks currently look different from the rest of the board.
-     * The resting look is whatever most note blocks share (colour stripped from the item id),
-     * so it works whichever block Hypixel uses for a lit note.
+     * The first slot of the note lit right now, -1 if none. A lit note has the enchantment
+     * glint; without any glint on the board, whatever looks different from most note blocks
+     * (colour stripped from the item id) counts as lit.
      */
-    private static String litColor() {
+    private static int litSlot() {
         int end = Math.min(45, size());
         Map<String, Integer> looks = new HashMap<>();
         List<Integer> notes = new ArrayList<>();
+        int firstFoil = -1;
+        int foils = 0;
         for (int i = 9; i < end; i++) {
             ItemStack stack = stackAt(i);
             if (stack.isEmpty() || itemId(stack).contains("pane")
@@ -997,9 +1094,18 @@ public final class AutoExperimentTable {
             }
             notes.add(i);
             looks.merge(look(stack), 1, Integer::sum);
+            if (stack.hasFoil()) {
+                foils++;
+                if (firstFoil < 0) {
+                    firstFoil = i;
+                }
+            }
+        }
+        if (foils > 0 && foils < notes.size()) {
+            return firstFoil;
         }
         if (looks.size() < 2) {
-            return null;
+            return -1;
         }
         String resting = null;
         int best = -1;
@@ -1013,12 +1119,31 @@ public final class AutoExperimentTable {
             }
         }
         for (int slot : notes) {
-            ItemStack stack = stackAt(slot);
-            if (!look(stack).equals(resting)) {
-                return clean(stack.getHoverName().getString());
+            if (!look(stackAt(slot)).equals(resting)) {
+                return slot;
             }
         }
-        return null;
+        return -1;
+    }
+
+    /** Which note a slot belongs to: its name plus the colour from the item id. */
+    private static String noteKey(int slot) {
+        ItemStack stack = stackAt(slot);
+        String path = itemId(stack);
+        path = path.substring(path.indexOf(':') + 1);
+        String color = "";
+        for (String prefix : COLOR_PREFIXES) {
+            if (path.startsWith(prefix)) {
+                color = prefix;
+                break;
+            }
+        }
+        return clean(stack.getHoverName().getString()) + "|" + color;
+    }
+
+    private static String describeSlot(int slot) {
+        ItemStack stack = stackAt(slot);
+        return clean(stack.getHoverName().getString()) + "/" + itemId(stack) + (stack.hasFoil() ? "*" : "");
     }
 
     /** Item id without its colour plus the glint, e.g. "stained_glass" or "terracotta*". */
@@ -1035,7 +1160,8 @@ public final class AutoExperimentTable {
     }
 
     /** Compact Chronomatron trace for the log: phase, indicator, lit note, top-middle item. */
-    private static void logChronoState(long now, Phase phase, String lit) {
+    private static void logChronoState(long now, Phase phase, int litSlot) {
+        String lit = litSlot < 0 ? null : litSlot + "=" + describeSlot(litSlot);
         String indicator = "";
         for (int i = size() - 1; i >= 0; i--) {
             ItemStack stack = stackAt(i);
@@ -1063,29 +1189,9 @@ public final class AutoExperimentTable {
                 continue;
             }
             sb.append(i).append('=').append(clean(stack.getHoverName().getString())).append('/')
-                    .append(look(stack)).append(' ');
+                    .append(itemId(stack)).append(stack.hasFoil() ? "*" : "").append(' ');
         }
         log("Chrono Feld +" + (now - chronoGameStart) + "ms: " + sb.toString().trim());
-    }
-
-    private static int slotForColor(String color) {
-        int end = Math.min(45, size());
-        int fallback = -1;
-        for (int i = 9; i < end; i++) {
-            ItemStack stack = stackAt(i);
-            if (stack.isEmpty() || itemId(stack).contains("pane")) {
-                continue;
-            }
-            if (clean(stack.getHoverName().getString()).equalsIgnoreCase(color)) {
-                if (!clean(stack.getHoverName().getString()).equalsIgnoreCase(litColor() == null ? "" : litColor())) {
-                    return i;
-                }
-                if (fallback < 0) {
-                    fallback = i;
-                }
-            }
-        }
-        return fallback;
     }
 
     private static boolean isUltrasequencerFiller(String id) {
@@ -1151,7 +1257,7 @@ public final class AutoExperimentTable {
                 return;
             }
         }
-        if (now - lastClickAt < CONFIG.clickDelayMs) {
+        if (now - lastClickAt < nextClickGapMs) {
             return;
         }
         if (container() == null) {
@@ -1172,10 +1278,16 @@ public final class AutoExperimentTable {
         p.attempts++;
         p.clickedAt = now;
         lastClickAt = now;
+        nextClickGapMs = jitter(CONFIG.clickDelayMs);
     }
 
     private static String signatureFor(PendingClick p) {
         return p.boardOnly ? signature(9, Math.min(45, size())) : signature(0, size());
+    }
+
+    /** {@code baseMs} with a random offset of -1, 0 or +1 ms, so the clicks are not perfectly even. */
+    private static long jitter(long baseMs) {
+        return Math.max(0L, baseMs + java.util.concurrent.ThreadLocalRandom.current().nextInt(-1, 2));
     }
 
     private static long verifyWindowMs() {

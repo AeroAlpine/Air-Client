@@ -92,6 +92,7 @@ public final class PathfinderSystem {
         } catch (RuntimeException e) {
             return;
         }
+        PathRecorder.tick(client, baritone, now);
         AotvAssist.tick(client, baritone);
         if (AotvAssist.isBusy()) {
             DETECTOR.reset(); // the warp itself looks like a setback
@@ -143,6 +144,8 @@ public final class PathfinderSystem {
                     : "[Pathfinder] " + where + " -> gemerkt (erst bei Wiederholung gemieden), plane neu";
         }
         System.out.println(text);
+        PathRecorder.onFault(text);
+        PathRecorder.onCancel("Watchdog: " + type.name());
         if (PathfinderConfig.get().showFaultsInChat) {
             com.coflnet.ahflipper.AhFlipperMod.message("§8" + text);
         }

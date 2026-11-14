@@ -95,7 +95,7 @@ public final class LookBehavior extends Behavior implements ILookBehavior {
                 }
 
                 this.prevRotation = new Rotation(ctx.player().getYRot(), ctx.player().getXRot());
-                final Rotation actual = this.processor.peekRotation(this.target.rotation);
+                final Rotation actual = limitTurn(this.processor.peekRotation(this.target.rotation));
                 ctx.player().setYRot(actual.getYaw());
                 ctx.player().setXRot(actual.getPitch());
                 break;
@@ -151,6 +151,24 @@ public final class LookBehavior extends Behavior implements ILookBehavior {
         this.target = null;
     }
 
+    /**
+     * Air Client: at most {@code maxYawChangePerTick} degrees away from the yaw last sent to the
+     * server (what the anticheat saw), so big turns take a few ticks instead of one.
+     */
+    private Rotation limitTurn(Rotation wanted) {
+        float max = Baritone.settings().maxYawChangePerTick.value;
+        if (max <= 0 || this.target == null || this.target.mode == Target.Mode.NONE) {
+            return wanted;
+        }
+        Rotation from = this.serverRotation != null ? this.serverRotation : ctx.playerRotations();
+        float delta = net.minecraft.util.Mth.wrapDegrees(wanted.getYaw() - from.getYaw());
+        if (Math.abs(delta) <= max) {
+            return wanted;
+        }
+        float yaw = wanted.getYaw() - delta + Math.signum(delta) * max;
+        return new Rotation(yaw, wanted.getPitch());
+    }
+
     public void pig() {
         if (this.target != null) {
             final Rotation actual = this.processor.peekRotation(this.target.rotation);
@@ -169,7 +187,7 @@ public final class LookBehavior extends Behavior implements ILookBehavior {
     @Override
     public void onPlayerRotationMove(RotationMoveEvent event) {
         if (this.target != null) {
-            final Rotation actual = this.processor.peekRotation(this.target.rotation);
+            final Rotation actual = limitTurn(this.processor.peekRotation(this.target.rotation));
             event.setYaw(actual.getYaw());
             event.setPitch(actual.getPitch());
         }

@@ -174,7 +174,7 @@ public class MovementPillar extends Movement {
                 return state.setStatus(MovementStatus.SUCCESS);
             }
 
-            MovementHelper.moveTowards(ctx, state, dest);
+            MovementHelper.moveTowardsExact(ctx, state, dest);
             state.setInput(Input.JUMP, true);
             return state;
         } else {

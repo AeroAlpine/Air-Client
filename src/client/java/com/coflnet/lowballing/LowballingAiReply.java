@@ -89,6 +89,20 @@ public final class LowballingAiReply {
             "no ah buys, send them in a trade",
             "i dont buy from ah, trade me the items");
 
+    private static final List<String> WEALTH = List.of(
+            "just flipping, u got anything to sell?",
+            "lowballing and flipping, u selling something?",
+            "buying cheap and reselling, u got items?",
+            "just trading, u got anything for me?",
+            "buy low sell high, u selling something?");
+
+    private static final List<String> SCAM_REPLY = List.of(
+            "im not scamming, {last} is my max",
+            "not a scam, {last} is all i can do",
+            "i buy to resell, {last} is my offer",
+            "no scam, ah tax kills the margin, {last} is my max",
+            "{last} is a real offer, not a scam");
+
     private static final java.util.Map<String, java.util.Deque<Integer>> LAST =
             new java.util.HashMap<>();
 
@@ -137,6 +151,14 @@ public final class LowballingAiReply {
 
     public static String ahRefusal() {
         return fill(pick("ah", AH_REFUSAL), 0, 0, null);
+    }
+
+    public static String wealthReply() {
+        return fill(pick("wealth", WEALTH), 0, 0, null);
+    }
+
+    public static String scamReply(long last, String item) {
+        return fill(pick("scam", SCAM_REPLY), 0, last, item);
     }
 
     public static String sanitize(String text) {

@@ -35,15 +35,24 @@ public final class LowballingAiPolicy {
             return LowballingAiDecision.replyOnly(
                     LowballingAiReply.ahRefusal(), "no ah buys, direct trade only");
         }
+        if (c.intent() == LowballingChatIntent.WEALTH_QUESTION) {
+            return LowballingAiDecision.replyOnly(
+                    LowballingAiReply.wealthReply(), "question about our money");
+        }
         if (ctx.target() && ctx.ahAsked() && c.refusal()) {
             return LowballingAiDecision.kick("refused direct trade after ah request");
         }
 
         if (!ctx.target()) {
+            if (c.intent() == LowballingChatIntent.ITEM_MENTION) {
+                return LowballingAiDecision.replyOnly(
+                        LowballingAiReply.noOffer(), "item mention");
+            }
             if (ctx.targetName() == null || ctx.targetName().isBlank()) {
                 // No trade target selected yet (island scan): do not pretend
                 // another visitor is interrupting a trade.
-                if (c.pricePresent() || c.intent() == LowballingChatIntent.QUESTION) {
+                if (c.pricePresent() || c.intent() == LowballingChatIntent.QUESTION
+                        || c.intent() == LowballingChatIntent.COMPLAINT) {
                     return LowballingAiDecision.replyOnly(
                             LowballingAiReply.noOffer(), "no target selected yet");
                 }
@@ -79,7 +88,10 @@ public final class LowballingAiPolicy {
                 }
                 return LowballingAiDecision.ignore("insult before valuation");
             }
-            if (c.pricePresent() || c.intent() == LowballingChatIntent.QUESTION) {
+            if (c.pricePresent() || c.intent() == LowballingChatIntent.QUESTION
+                    || c.intent() == LowballingChatIntent.ITEM_MENTION
+                    || c.intent() == LowballingChatIntent.COMPLAINT
+                    || c.intent() == LowballingChatIntent.ACCEPT) {
                 return LowballingAiDecision.replyOnly(
                         LowballingAiReply.noOffer(), "no offer valued yet");
             }
@@ -94,9 +106,35 @@ public final class LowballingAiPolicy {
             return LowballingAiDecision.ignore("not enough bankroll");
         }
 
+        if (c.pricePresent() && c.insult() && !containsOfferVerb(lowerMessage)) {
+            if (rules.allowKick()) {
+                return LowballingAiDecision.kick("insult with a price");
+            }
+            return LowballingAiDecision.informationReply(
+                    LowballingAiReply.insult(max, item), "insult with a price");
+        }
+
         if (c.pricePresent() && c.valueClaim()) {
             return LowballingAiDecision.informationReply(
                     LowballingAiReply.valueClaim(max, item), "market value claim");
+        }
+
+        if (c.pricePresent() && !containsOfferVerb(lowerMessage)
+                && (lowerMessage.contains("scam") || lowerMessage.contains("scammer")
+                || lowerMessage.contains("robbery") || lowerMessage.contains("lowball")
+                || lowerMessage.contains("joke") || lowerMessage.contains("troll"))) {
+            // "nah thats a scam making 80m profit" is not an offer of 80m.
+            String text = lowerMessage.contains("scam")
+                    ? LowballingAiReply.scamReply(max, item)
+                    : LowballingAiReply.complaint(max, item);
+            if (ctx.complaintCount() < rules.maxComplaints()) {
+                return LowballingAiDecision.complaintReply(
+                        text, "accusation with a price");
+            }
+            if (rules.allowKick()) {
+                return LowballingAiDecision.kick("accusation repeated");
+            }
+            return LowballingAiDecision.informationReply(text, "accusation");
         }
 
         if (c.pricePresent()) {
@@ -221,6 +259,11 @@ public final class LowballingAiPolicy {
             return LowballingAiDecision.wait(
                     LowballingAiReply.waitMessage(), rules.waitMs(),
                     "visitor asked us to wait");
+        }
+
+        if (c.intent() == LowballingChatIntent.ITEM_MENTION) {
+            return LowballingAiDecision.replyOnly(
+                    LowballingAiReply.noOffer(), "item mention");
         }
 
         return LowballingAiDecision.ignore("no actionable chat");

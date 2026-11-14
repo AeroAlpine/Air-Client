@@ -21,14 +21,16 @@ import java.util.UUID;
 import java.util.concurrent.ThreadLocalRandom;
 
 /**
- * Follows the player or entity named in {@link PlayerSettings#followTarget}
- * with Baritone's follow process (real pathing, keeps
- * {@link PlayerSettings#followDistance} blocks distance).
+ * Combat (formerly Follow): while {@link PlayerSettings#combatEnabled} (GUI toggle or hotkey),
+ * follows the nearest player or entity matching one of {@link PlayerSettings#combatTargets}
+ * with Baritone's follow process (real pathing, keeps {@link PlayerSettings#followDistance}
+ * blocks distance).
  *
- * <p>The name may be a player name, part of an entity's name ("Zealot",
- * also SkyBlock mobs whose name is on a nametag armor stand) or an entity type
- * ("zombie", "minecraft:zombie"). With {@link PlayerSettings#followAttack} the
- * followed target is attacked through KillAura, restricted to that one target.
+ * <p>A name may be a player name, part of an entity's name ("Zealot", also SkyBlock mobs whose
+ * name is on a nametag armor stand) or an entity type ("zombie", "minecraft:zombie"). With
+ * {@link PlayerSettings#followAttack} the followed target is attacked through KillAura,
+ * restricted to that one target; when leaves or other blocks hide it, the bot walks closer
+ * until it can see it.
  */
 public final class FollowFeature {
     private static final double MAX_DISTANCE = 96.0;
@@ -44,16 +46,78 @@ public final class FollowFeature {
     private static float lookYaw;
     private static float lookPitch;
     private static long lastFrameNanos;
-    /** Degrees per second for the walking look. */
-    private static final float LOOK_SPEED = 260.0f;
+    private static net.minecraft.client.KeyMapping toggleKey;
+    /** Ticks the attacked target was hidden / visible in a row, and whether we walk closer. */
+    private static int hiddenTicks;
+    private static int visibleTicks;
+    private static boolean closeIn;
+    private static final int HIDDEN_SWITCH_TICKS = 10;
 
     private FollowFeature() {
     }
 
+    public static void setToggleKey(net.minecraft.client.KeyMapping key) {
+        toggleKey = key;
+    }
+
+    public static net.minecraft.client.KeyMapping toggleKey() {
+        return toggleKey;
+    }
+
+    /** The target names, in the order they were added. */
+    public static List<String> targets() {
+        String raw = PlayerSettings.combatTargets == null ? "" : PlayerSettings.combatTargets;
+        List<String> result = new java.util.ArrayList<>();
+        for (String part : raw.split(";")) {
+            String name = part.trim();
+            if (!name.isEmpty() && result.stream().noneMatch(name::equalsIgnoreCase)) {
+                result.add(name);
+            }
+        }
+        return result;
+    }
+
+    public static boolean addTarget(String name) {
+        String clean = name == null ? "" : name.replace(";", "").trim();
+        List<String> list = targets();
+        if (clean.isEmpty() || list.stream().anyMatch(clean::equalsIgnoreCase)) {
+            return false;
+        }
+        list.add(clean);
+        PlayerSettings.combatTargets = String.join(";", list);
+        followed = null;
+        return true;
+    }
+
+    public static boolean removeTarget(String name) {
+        List<String> list = targets();
+        boolean removed = list.removeIf(entry -> entry.equalsIgnoreCase(name));
+        PlayerSettings.combatTargets = String.join(";", list);
+        followed = null;
+        return removed;
+    }
+
+    /** GUI toggle and hotkey. */
+    public static void toggle() {
+        PlayerSettings.combatEnabled = !PlayerSettings.combatEnabled;
+        PlayerSettings.save();
+        Minecraft client = Minecraft.getInstance();
+        if (client.player != null) {
+            String state = PlayerSettings.combatEnabled
+                    ? (targets().isEmpty() ? "\u00a7aan \u00a77(keine Ziele eingetragen)"
+                            : "\u00a7aan \u00a77- " + String.join(", ", targets()))
+                    : "\u00a7caus";
+            client.player.sendSystemMessage(net.minecraft.network.chat.Component.literal("\u00a7c[Combat] \u00a77" + state));
+        }
+        if (!PlayerSettings.combatEnabled) {
+            release();
+        }
+    }
+
     public static void tick(Minecraft client) {
         LocalPlayer player = client.player;
-        String name = PlayerSettings.followTarget == null ? "" : PlayerSettings.followTarget.trim();
-        if (player == null || client.level == null || name.isEmpty() || otherBotUsesBaritone()) {
+        List<String> names = PlayerSettings.combatEnabled ? targets() : List.of();
+        if (player == null || client.level == null || names.isEmpty() || otherBotUsesBaritone()) {
             release();
             return;
         }
@@ -64,7 +128,7 @@ public final class FollowFeature {
                 return;
             }
             searchCooldown = 10;
-            followed = findTarget(client, player, name);
+            followed = findTarget(client, player, names);
             if (followed == null) {
                 stopBaritone();
                 return;
@@ -73,7 +137,7 @@ public final class FollowFeature {
         } else if (!(followed instanceof Player) && --switchCheckCooldown <= 0) {
             // mobs: move on to another one that is clearly closer (with hysteresis)
             switchCheckCooldown = 20;
-            Entity closer = findTarget(client, player, name);
+            Entity closer = findTarget(client, player, names);
             long now = System.currentTimeMillis();
             if (closer != null && closer != followed && TargetSwitch.shouldSwitch(
                     effectiveDistance(player, followed), effectiveDistance(player, closer), now - lastSwitchAt)) {
@@ -85,9 +149,27 @@ public final class FollowFeature {
         if (baritone == null) {
             return;
         }
-        configure();
-        IFollowProcess follow = baritone.getFollowProcess();
         Entity current = followed;
+        LivingEntity attack = PlayerSettings.followAttack ? attackable(current) : null;
+        // Leaves or a wall between us and the target: get closer until it is visible. Only after
+        // it stayed hidden / visible for half a second and only on the ground: switching on every
+        // flicker of the line of sight (each jump) re-planned the path constantly.
+        if (attack != null && !player.hasLineOfSight(current)) {
+            hiddenTicks++;
+            visibleTicks = 0;
+        } else {
+            visibleTicks++;
+            hiddenTicks = 0;
+        }
+        if (player.onGround()) {
+            if (!closeIn && hiddenTicks >= HIDDEN_SWITCH_TICKS) {
+                closeIn = true;
+            } else if (closeIn && visibleTicks >= HIDDEN_SWITCH_TICKS) {
+                closeIn = false;
+            }
+        }
+        configure(closeIn && attack != null);
+        IFollowProcess follow = baritone.getFollowProcess();
         EntityObstacles.setTarget(current);
         if (issued != current || !follow.isActive()) {
             follow.follow(entity -> entity == current);
@@ -95,7 +177,6 @@ public final class FollowFeature {
         }
         active = true;
 
-        LivingEntity attack = PlayerSettings.followAttack ? attackable(current) : null;
         KillAuraFeature.setForcedTarget(attack == null ? null : entity -> entity == attack,
                 PlayerSettings.followCpsMin, PlayerSettings.followCpsMax);
         updateLook(client, player, baritone, current, attack != null);
@@ -169,8 +250,9 @@ public final class FollowFeature {
         if (!active || !hasLook || player == null || client.gui.screen() != null) {
             return;
         }
-        player.setYRot(AimSmoothing.step(player.getYRot(), lookYaw, LOOK_SPEED, dt));
-        player.setXRot(Math.clamp(AimSmoothing.step(player.getXRot(), lookPitch, LOOK_SPEED, dt), -90.0f, 90.0f));
+        float speed = Math.clamp(PlayerSettings.combatRotationSpeed, 30.0f, 1080.0f);
+        player.setYRot(AimSmoothing.step(player.getYRot(), lookYaw, speed, dt));
+        player.setXRot(Math.clamp(AimSmoothing.step(player.getXRot(), lookPitch, speed, dt), -90.0f, 90.0f));
         player.setYHeadRot(player.getYRot());
     }
 
@@ -179,25 +261,27 @@ public final class FollowFeature {
     }
 
     /**
-     * Player name first, then entity name / nametag / type, nearest one. A
-     * SkyBlock nametag stand resolves to the mob under it; a stand without a
-     * living mob (the mob just died) is skipped, not followed.
+     * Player names first (in list order), then the nearest entity whose name / nametag / type
+     * matches any of the names. A SkyBlock nametag stand resolves to the mob under it; a stand
+     * without a living mob (the mob just died) is skipped, not followed.
      */
-    static Entity findTarget(Minecraft client, LocalPlayer player, String name) {
-        String wanted = name.toLowerCase(Locale.ROOT);
-        for (Player other : client.level.players()) {
-            if (other != player && !other.isSpectator()
-                    && other.getGameProfile().name().equalsIgnoreCase(name)) {
-                return other;
+    static Entity findTarget(Minecraft client, LocalPlayer player, List<String> names) {
+        for (String name : names) {
+            for (Player other : client.level.players()) {
+                if (other != player && !other.isSpectator()
+                        && other.getGameProfile().name().equalsIgnoreCase(name)) {
+                    return other;
+                }
             }
         }
+        List<String> wanted = names.stream().map(n -> n.toLowerCase(Locale.ROOT)).toList();
         Entity best = null;
         double bestDistance = MAX_DISTANCE * MAX_DISTANCE;
         for (Entity entity : client.level.entitiesForRendering()) {
             if (entity == player || !entity.isAlive() || entity.isRemoved()) {
                 continue;
             }
-            if (!nameMatches(entity, wanted)) {
+            if (wanted.stream().noneMatch(w -> nameMatches(entity, w))) {
                 continue;
             }
             Entity target = SkyblockTargets.resolve(client.level, entity);
@@ -246,13 +330,13 @@ public final class FollowFeature {
         return mob.enabled && !mob.targetName.isBlank();
     }
 
-    private static void configure() {
+    private static void configure(boolean hidden) {
         baritone.api.Settings s = BaritoneAPI.getSettings();
         s.allowBreak.value = false;
         s.allowPlace.value = false;
         s.allowInventory.value = false;
         s.antiCheatCompatibility.value = true;
-        s.followRadius.value = Math.clamp(PlayerSettings.followDistance, 1, 16);
+        s.followRadius.value = hidden ? 1 : Math.clamp(PlayerSettings.followDistance, 1, 16);
         s.followOffsetDistance.value = 0.0;
         // The camera is steered here (walking direction) or by KillAura, never by Baritone.
         s.freeLook.value = true;

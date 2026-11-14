@@ -140,10 +140,15 @@ public class MovementFall extends Movement {
             }
         }
         Vec3 destCenter = VecUtils.getBlockPosCenter(dest); // we are moving to the 0.5 center not the edge (like if we were falling on a ladder)
-        if (Math.abs(ctx.player().position().x + ctx.player().getDeltaMovement().x - destCenter.x) > 0.1 || Math.abs(ctx.player().position().z + ctx.player().getDeltaMovement().z - destCenter.z) > 0.1) {
-            if (!ctx.player().onGround() && Math.abs(ctx.player().getDeltaMovement().y) > 0.4) {
-                state.setInput(Input.SNEAK, true);
-            }
+        double flatX = destCenter.x - ctx.player().position().x;
+        double flatZ = destCenter.z - ctx.player().position().z;
+        double flatToCenter = Math.sqrt(flatX * flatX + flatZ * flatZ);
+        // Air Client: no sneaking in mid-air any more, and forward only while clearly off the
+        // centre. Sneak + forward with a spinning rotation during the fall was what the server
+        // answered with a setback every few ticks (path recorder logs).
+        if (flatToCenter > MovementHelper.STEADY_YAW_RADIUS
+                && (Math.abs(ctx.player().position().x + ctx.player().getDeltaMovement().x - destCenter.x) > 0.1
+                || Math.abs(ctx.player().position().z + ctx.player().getDeltaMovement().z - destCenter.z) > 0.1)) {
             state.setInput(Input.MOVE_FORWARD, true);
         }
         Vec3i avoid = Optional.ofNullable(avoid()).map(Direction::getUnitVec3i).orElse(null);
@@ -158,8 +163,15 @@ public class MovementFall extends Movement {
             }
         }
         if (targetRotation == null) {
-            Vec3 destCenterOffset = new Vec3(destCenter.x + 0.125 * avoid.getX(), destCenter.y, destCenter.z + 0.125 * avoid.getZ());
-            state.setTarget(new MovementTarget(RotationUtils.calcRotationFromVec3d(ctx.playerHead(), destCenterOffset, ctx.playerRotations()), false));
+            if (flatToCenter < 0.5) {
+                // Air Client: right above the landing block the yaw to its centre spins around;
+                // keep looking where we look.
+                state.setTarget(new MovementTarget(ctx.playerRotations(), false));
+            } else {
+                Vec3 destCenterOffset = new Vec3(destCenter.x + 0.125 * avoid.getX(), destCenter.y, destCenter.z + 0.125 * avoid.getZ());
+                state.setTarget(new MovementTarget(RotationUtils.calcRotationFromVec3d(ctx.playerHead(), destCenterOffset, ctx.playerRotations())
+                        .withPitch(ctx.playerRotations().getPitch()), false));
+            }
         }
         return state;
     }

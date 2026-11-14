@@ -382,7 +382,6 @@ public class AhFlipperMod {
                 .then(ClientCommands.literal("scan").executes(AhFlipperMod::scanCommand))
                 .then(ClientCommands.literal("stream").executes(AhFlipperMod::streamCommand))
                 .then(ClientCommands.literal("feed").executes(AhFlipperMod::streamCommand))
-                .then(ClientCommands.literal("automations").executes(AhFlipperMod::automationsCommand))
                 .then(ClientCommands.literal("invest").executes(AhFlipperMod::investmentCommand))
                 .then(ClientCommands.literal("investment").executes(AhFlipperMod::investmentCommand))
                 .then(ClientCommands.literal("skins").executes(AhFlipperMod::fireSaleCommand))
@@ -434,15 +433,8 @@ public class AhFlipperMod {
         }
         running = true;
         recon = true;
-        if (CONFIG.liveFeed) {
-            AhLiveScanner.start();
-        }
-        if (CONFIG.autoScan) {
-            AhScanner.start();
-        }
-        if (CONFIG.bidMacro) {
-            AhBidMacro.start();
-        }
+        // First claim and list what waits in "View Bids", then start flipping.
+        startAfterBidClaim();
         long oldest = System.currentTimeMillis() - LISTING_TASK_MAX_AGE_MS;
         synchronized (LISTING_QUEUE) {
             LISTING_QUEUE.removeIf(task -> task.at() < oldest);
@@ -451,6 +443,200 @@ public class AhFlipperMod {
         refreshActiveAuctionCountAsync();
         message("\u00a76[AH-Flipper] \u00a7aactive \u00a77(Live " + (CONFIG.liveFeed ? "\u00a7aon" : "\u00a7coff") + "\u00a77, Scanner " + (CONFIG.autoScan ? "\u00a7aon" : "\u00a7coff") + "\u00a77, Auto-Buy " + (autoBuy ? "\u00a7aon" : "\u00a7coff") + "\u00a77).");
         message("\u00a77Investment: \u00a7fF10 \u00a77\u00b7 Fire Sale: \u00a7fF8");
+    }
+
+    /** A won bid in "View Bids": what it is, what it is worth and what was paid. */
+    private record WonBid(String tag, String name, long value, long paid) {
+    }
+
+    private static void startAfterBidClaim() {
+        Thread thread = new Thread(() -> {
+            try {
+                claimAndListBids();
+            } catch (Exception e) {
+                System.out.println("[AH-Flipper] Start-Claim Fehler: " + e);
+            }
+            if (!running) {
+                return;
+            }
+            if (CONFIG.liveFeed) {
+                AhLiveScanner.start();
+            }
+            if (CONFIG.autoScan) {
+                AhScanner.start();
+            }
+            if (CONFIG.bidMacro) {
+                AhBidMacro.start();
+            }
+        }, "skycofl-ah-start-claim");
+        thread.setDaemon(true);
+        thread.start();
+    }
+
+    /**
+     * On start, before anything new is flipped: everything waiting in "View Bids" (won bids,
+     * also those of co-op members) is claimed - with "Claim All" when the menu has it - and
+     * every item that arrives is listed at the flipper's valuation.
+     */
+    private static void claimAndListBids() {
+        AutomationGate.Lease lease = AutomationGate.acquire("start-claim", false, 20_000L);
+        if (lease == null) {
+            System.out.println("[AH-Flipper] Start-Claim: AH ist belegt - übersprungen");
+            return;
+        }
+        ensureAhPriority();
+        try {
+            if (AhScreenUtil.currentScreen() != AhScreenUtil.AhScreen.NONE || AhScreenUtil.isContainerOpen()) {
+                ScreenUtil.closeAndWait(400);
+            }
+            sendCommand("/ah");
+            if (!waitForTitle(4000, "auction")) {
+                message("\u00a7eView Bids: AH did not open - skipped.");
+                return;
+            }
+            int button = -1;
+            long end = System.currentTimeMillis() + 2000;
+            while (button < 0 && running && System.currentTimeMillis() < end) {
+                button = findButtonOrText("view bids", "your bids", "manage bids");
+                if (button < 0) {
+                    ScreenUtil.sleep(50);
+                }
+            }
+            if (button < 0) {
+                System.out.println("[AH-Flipper] Start-Claim: kein View-Bids-Button (keine Gebote)");
+                ScreenUtil.closeCurrentScreen();
+                return;
+            }
+            ScreenUtil.clickSlot(button, 0);
+            if (!waitForClaimScreen(3500)) {
+                message("\u00a7eView Bids did not open - skipped.");
+                ScreenUtil.closeCurrentScreen();
+                return;
+            }
+            ScreenUtil.sleep(500);
+            java.util.List<WonBid> won = readWonBids();
+            int claimAll = ScreenUtil.findButton("claim all");
+            if (won.isEmpty() && claimAll < 0) {
+                message("\u00a77View Bids: nothing to claim.");
+                ScreenUtil.closeCurrentScreen();
+                return;
+            }
+            int[] baselines = new int[won.size()];
+            for (int i = 0; i < won.size(); i++) {
+                baselines[i] = AhScreenUtil.countInventoryMatches(won.get(i).tag(), won.get(i).name());
+            }
+            if (claimAll >= 0) {
+                ScreenUtil.middleClickSlot(claimAll);
+                ScreenUtil.sleep(900);
+                if (ScreenUtil.findButton("claim all") == claimAll) {
+                    ScreenUtil.clickSlot(claimAll, 0); // in case the menu ignored the middle click
+                    ScreenUtil.sleep(900);
+                }
+                System.out.println("[AH-Flipper] Start-Claim: Claim All geklickt");
+            } else {
+                clickClaimableItems();
+            }
+            ScreenUtil.closeCurrentScreen();
+            int claimed = 0;
+            int queued = 0;
+            for (int i = 0; i < won.size(); i++) {
+                WonBid bid = won.get(i);
+                long until = System.currentTimeMillis() + 2500;
+                boolean arrived = false;
+                while (System.currentTimeMillis() < until) {
+                    if (AhScreenUtil.countInventoryMatches(bid.tag(), bid.name()) > baselines[i]) {
+                        arrived = true;
+                        break;
+                    }
+                    ScreenUtil.sleep(100);
+                }
+                if (!arrived) {
+                    continue;
+                }
+                claimed++;
+                if (bid.value() > 0) {
+                    enqueueListing(bid.tag(), bid.name(), bid.value(), bid.paid(), "");
+                    queued++;
+                } else {
+                    message("\u00a7eNo value for \u00a7f" + bid.name() + "\u00a7e - claimed, not listed.");
+                }
+            }
+            message("\u00a76[AH-Flipper] \u00a77View Bids: \u00a7f" + claimed + "\u00a77 claimed, \u00a7f"
+                    + queued + "\u00a77 queued for listing.");
+        } finally {
+            AutomationGate.release(lease);
+            releaseAhPriorityIfIdle();
+        }
+    }
+
+    /** Items in the open "Your Bids" menu that can be collected, with value and price paid. */
+    private static java.util.List<WonBid> readWonBids() {
+        record Entry(ItemStack stack, java.util.List<String> lore) {
+        }
+        java.util.List<Entry> entries = ScreenUtil.sync(() -> {
+            java.util.List<Entry> list = new java.util.ArrayList<>();
+            if (!(Minecraft.getInstance().gui.screen() instanceof AbstractContainerScreen<?> container)) {
+                return list;
+            }
+            int size = container.getMenu() instanceof net.minecraft.world.inventory.ChestMenu chest
+                    ? chest.getContainer().getContainerSize()
+                    : Math.max(0, container.getMenu().slots.size() - 36);
+            for (int i = 0; i < size; i++) {
+                ItemStack stack = container.getMenu().getSlot(i).getItem();
+                if (stack.isEmpty()) {
+                    continue;
+                }
+                java.util.List<String> lore = new java.util.ArrayList<>();
+                var component = stack.get(net.minecraft.core.component.DataComponents.LORE);
+                if (component != null) {
+                    for (Component line : component.lines()) {
+                        lore.add(ScreenUtil.cleanName(line.getString()));
+                    }
+                }
+                list.add(new Entry(stack.copy(), lore));
+            }
+            return list;
+        });
+        java.util.List<WonBid> result = new java.util.ArrayList<>();
+        if (entries == null) {
+            return result;
+        }
+        for (Entry entry : entries) {
+            String name = ScreenUtil.cleanName(entry.stack().getHoverName().getString());
+            String lowerName = name.toLowerCase(java.util.Locale.ROOT);
+            if (lowerName.contains("claim all") || lowerName.contains("go back") || lowerName.equals("close")) {
+                continue;
+            }
+            String lore = String.join("\n", entry.lore()).toLowerCase(java.util.Locale.ROOT);
+            boolean ended = lore.contains("status: ended") || lore.contains("ended!") || lore.contains("won")
+                    || lore.contains("click to claim") || lore.contains("click to collect")
+                    || lore.contains("pick up");
+            if (!ended || lore.contains("collect coins") || lore.contains("claim coins")) {
+                continue;
+            }
+            long paid = 0;
+            for (String line : entry.lore()) {
+                String lower = line.toLowerCase(java.util.Locale.ROOT);
+                if (lower.contains("top bid") || lower.contains("your bid") || lower.contains("highest bid")) {
+                    paid = AhScreenUtil.parseCoins(line);
+                    if (paid > 0) {
+                        break;
+                    }
+                }
+            }
+            AhItem item = AhItem.resolveCofl(entry.stack(), 2500);
+            long value = 0;
+            try {
+                value = AhValuation.estimate(item, "").estimated;
+            } catch (RuntimeException e) {
+                System.out.println("[AH-Flipper] Start-Claim: Bewertung fehlgeschlagen für " + name + ": " + e);
+            }
+            String tag = item.tag == null ? "" : item.tag;
+            System.out.println("[AH-Flipper] Start-Claim: " + name + " tag=" + tag + " wert=" + value + " bezahlt=" + paid);
+            result.add(new WonBid(tag, item.displayName == null || item.displayName.isBlank() ? name : item.displayName,
+                    value, paid));
+        }
+        return result;
     }
 
     private static void stop() {
@@ -2072,6 +2258,11 @@ public class AhFlipperMod {
         releaseAhPriorityIfIdle();
     }
 
+    /** An AH action (buy, claim, listing ...) is using the open menu right now. */
+    public static boolean isRunningGuiAction() {
+        return isBusy();
+    }
+
     static boolean isBusy() {
         return AutomationGate.isBusy();
     }
@@ -2820,20 +3011,51 @@ public class AhFlipperMod {
             recoveryValue = resale;
             recoveryPrice = price;
             PriorityAccess.applyDelay();
-            if (!spamBuyButton()) {
+            // "Confirm Purchase" is clicked on the client thread as soon as its items arrive,
+            // up to the highest price that still passes the checks below.
+            long confirmLimit = Math.round(net / (1.0 + minProfit / 100.0));
+            if (expectedProfit > 0) {
+                confirmLimit = Math.min(confirmLimit, net - Math.round(expectedProfit * 0.5));
+            }
+            confirmAt = System.currentTimeMillis();
+            AhInstantConfirm.arm(Math.max(1L, confirmLimit), 30_000L);
+            boolean buyClicked = spamBuyButton();
+            if (AhInstantConfirm.clickedAt() > 0) {
+                purchaseAttempted = true;
+            } else if (!buyClicked) {
+                AhInstantConfirm.disarm();
+            }
+            if (!buyClicked && !purchaseAttempted) {
                 // The buy button never got through, so nothing can have been
                 // bought: no claim/recovery run afterwards.
-                System.out.println("[AH-Flipper] Kaufbutton nicht aktiv");
-                message("\u00a7cBuy button not active - cancelled.");
+                String reason = buyGiveUpReason;
+                System.out.println("[AH-Flipper] Kaufbutton nicht aktiv (" + reason + ")");
+                message(switch (reason) {
+                    case "sold" -> "\u00a7eSomeone else bought it first - cancelled.";
+                    case "closed" -> "\u00a7cAuction view closed - cancelled.";
+                    case "timeout" -> "\u00a7cBuy button stayed inactive for " + (BUY_SPAM_MS / 1000) + "s - cancelled.";
+                    default -> "\u00a7cBuy button not active - cancelled.";
+                });
                 AhScreenUtil.dumpScreen();
                 ScreenUtil.closeCurrentScreen();
                 return;
             }
-            long confirmPrice = AhScreenUtil.currentPriceAt(11);
-            if (confirmPrice <= 0) {
-                confirmPrice = AhScreenUtil.currentPrice();
+            long confirmPrice = AhInstantConfirm.clickedPrice();
+            if (AhInstantConfirm.clickedAt() <= 0) {
+                confirmPrice = AhScreenUtil.currentPriceAt(11);
+                if (confirmPrice <= 0) {
+                    confirmPrice = AhScreenUtil.currentPrice();
+                }
             }
-            if (confirmPrice > 0 && confirmPrice != price) {
+            if (AhInstantConfirm.clickedAt() > 0) {
+                // Already confirmed at a price below the limit: only the numbers change.
+                if (confirmPrice > 0 && confirmPrice != price) {
+                    profit = Math.round(resale * (1.0 - feeFraction)) - confirmPrice;
+                    profitPercent = profit * 100.0 / confirmPrice;
+                    price = confirmPrice;
+                    recoveryPrice = price;
+                }
+            } else if (confirmPrice > 0 && confirmPrice != price) {
                 long confirmProfit = Math.round(resale * (1.0 - feeFraction)) - confirmPrice;
                 double confirmPercent = confirmProfit * 100.0 / confirmPrice;
                 System.out.println("[AH-Flipper] Confirm-Preis " + confirmPrice
@@ -2841,6 +3063,7 @@ public class AhFlipperMod {
                         + String.format(java.util.Locale.US, "%.1f%%", confirmPercent));
                 if (confirmPercent < minProfit
                         || (expectedProfit > 0 && confirmProfit < expectedProfit * 0.5)) {
+                    AhInstantConfirm.disarm();
                     message("\u00a7cConfirm price " + ScreenUtil.formatCoins(confirmPrice) + " makes the purchase unprofitable - cancelled.");
                     ScreenUtil.closeCurrentScreen();
                     return;
@@ -2852,8 +3075,9 @@ public class AhFlipperMod {
             }
             // From here on a purchase may really happen (confirm clicked), so a
             // failure has to be followed by a look at what Hypixel answered.
+            // confirmAt stays at the moment the instant confirm was armed: its click may
+            // already have been answered.
             purchaseAttempted = true;
-            confirmAt = System.currentTimeMillis();
             if (!spamConfirmButton()) {
                 System.out.println("[AH-Flipper] Confirm Purchase nicht bestätigt");
                 message("§cConfirmation did not go through.");
@@ -2907,6 +3131,7 @@ public class AhFlipperMod {
             System.out.println("[AH-Flipper] buyFlow Fehler: " + e);
             message("\u00a7cPurchase failed: " + e.getMessage());
         } finally {
+            AhInstantConfirm.disarm();
             if (purchaseAttempted && !purchaseSucceeded) {
                 // The confirm menu never closed or the flow crashed: only the chat
                 // can tell whether the purchase happened.
@@ -3551,73 +3776,172 @@ public class AhFlipperMod {
         return findConfirmPurchaseSlot() >= 0;
     }
 
+    /** One buy-button click: what the screen showed, and where it was clicked. */
+    private record BuyClick(int state, int slot, boolean cooldown) {
+        static final int CONFIRM = 0;
+        static final int LEFT_VIEW = 1;
+        static final int CLICKED = 2;
+    }
+
+    /**
+     * Middle click by default (no local cursor pickup, like the experiment table). After a few
+     * clicks without reaction every second click is a left click, in case a menu ignores middle.
+     */
+    private static boolean useLeftClick(int clicks) {
+        return clicks >= 6 && clicks % 2 == 1;
+    }
+
+    /**
+     * How long the buy button is spammed (grace period of fresh BIN auctions). 25 s gave up
+     * 10-20 s too early.
+     */
+    private static final long BUY_SPAM_MS = 45_000L;
+    /** Why the last spamBuyButton() gave up (for the chat message). */
+    private static volatile String buyGiveUpReason = "";
+
     private static boolean spamBuyButton() {
+        buyGiveUpReason = "";
         long start = System.currentTimeMillis();
-        long deadline = start + 25_000;
+        long deadline = start + BUY_SPAM_MS;
         long lastUnavailableCheck = start;
         boolean loggedCooldown = false;
+        int clicks = 0;
         while (running && System.currentTimeMillis() <= deadline) {
-            if (isConfirmPurchaseScreen()) {
-                return true;
-            }
-            AhScreenUtil.AhScreen screen = AhScreenUtil.currentScreen();
-            if (screen != AhScreenUtil.AhScreen.BIN_VIEW) {
-                // When the grace period ends the BIN view is replaced by
-                // "Confirm Purchase"; for a moment neither is open. Giving up
-                // here cancelled purchases right when the button became active.
-                return waitForConfirmPurchase(2_000L);
+            if (AhInstantConfirm.clickedAt() > 0) {
+                return true; // confirm already clicked on the client thread
             }
             long now = System.currentTimeMillis();
             if (now - lastUnavailableCheck >= 500) {
                 lastUnavailableCheck = now;
                 if (AhScreenUtil.currentAuctionUnavailable()) {
                     System.out.println("[AH-Flipper] Kauf abgebrochen: "
-                            + "Auktion nicht mehr verf\u00fcgbar");
+                            + "Auktion nicht mehr verfügbar");
+                    buyGiveUpReason = "sold";
                     return false;
                 }
             }
-            int buySlot = findBuyButtonSlot();
-            boolean cooldown = false;
-            if (buySlot < 0) {
-                buySlot = findBuyCooldownSlot();
-                cooldown = buySlot >= 0;
+            final boolean left = useLeftClick(clicks);
+            // Read the screen and click in the same client-thread task: one frame per click
+            // instead of four or five (50 ms each with a background window).
+            BuyClick click = ScreenUtil.sync(() -> {
+                if (isConfirmPurchaseScreen()) {
+                    return new BuyClick(BuyClick.CONFIRM, -1, false);
+                }
+                if (AhScreenUtil.currentScreen() != AhScreenUtil.AhScreen.BIN_VIEW) {
+                    return new BuyClick(BuyClick.LEFT_VIEW, -1, false);
+                }
+                int buySlot = findBuyButtonSlot();
+                boolean cooldown = false;
+                if (buySlot < 0) {
+                    buySlot = findBuyCooldownSlot();
+                    cooldown = buySlot >= 0;
+                }
+                if (buySlot < 0) {
+                    buySlot = 31;
+                    cooldown = true;
+                }
+                if (left) {
+                    ScreenUtil.clickNow(buySlot, 0);
+                } else {
+                    ScreenUtil.middleClickNow(buySlot);
+                }
+                return new BuyClick(BuyClick.CLICKED, buySlot, cooldown);
+            });
+            if (click == null) {
+                ScreenUtil.sleep(20);
+                continue;
             }
-            if (buySlot < 0) {
-                buySlot = 31;
-                cooldown = true;
+            if (click.state() == BuyClick.CONFIRM) {
+                return true;
             }
-            if (cooldown && !loggedCooldown) {
-                deadline = Math.max(deadline, start + 25_000);
-                System.out.println("[AH-Flipper] Buy-Cooldown: spame Slot " + buySlot
-                        + " mit 30-35 CPS fuer 25s");
+            if (click.state() == BuyClick.LEFT_VIEW) {
+                // When the grace period ends the BIN view is replaced by
+                // "Confirm Purchase"; for a moment neither is open. Hypixel also
+                // reopens the BIN view now and then: then keep spamming.
+                long viewDeadline = System.currentTimeMillis() + 3_000L;
+                boolean binBack = false;
+                while (System.currentTimeMillis() < viewDeadline) {
+                    if (AhInstantConfirm.clickedAt() > 0 || isConfirmPurchaseScreen()) {
+                        return true;
+                    }
+                    if (AhScreenUtil.currentScreen() == AhScreenUtil.AhScreen.BIN_VIEW) {
+                        binBack = true;
+                        break;
+                    }
+                    ScreenUtil.sleep(20);
+                }
+                if (!binBack) {
+                    buyGiveUpReason = "closed";
+                    return AhInstantConfirm.clickedAt() > 0;
+                }
+                continue;
+            }
+            clicks++;
+            if (click.cooldown() && !loggedCooldown) {
+                deadline = Math.max(deadline, start + BUY_SPAM_MS);
+                System.out.println("[AH-Flipper] Buy-Cooldown: spame Slot " + click.slot()
+                        + " mit 30-35 CPS fuer " + (BUY_SPAM_MS / 1000) + "s");
                 loggedCooldown = true;
             }
-            ScreenUtil.clickSlot(buySlot, 0);
-            ScreenUtil.sleep(cooldown ? cooldownClickDelay() : clickDelay());
+            ScreenUtil.sleep(click.cooldown() ? cooldownClickDelay() : clickDelay());
         }
-        return AhScreenUtil.currentScreen() == AhScreenUtil.AhScreen.CONFIRM_PURCHASE;
+        if (System.currentTimeMillis() > deadline) {
+            buyGiveUpReason = "timeout";
+        }
+        return AhInstantConfirm.clickedAt() > 0
+                || AhScreenUtil.currentScreen() == AhScreenUtil.AhScreen.CONFIRM_PURCHASE;
     }
 
     private static boolean waitForConfirmPurchase(long timeoutMs) {
         long end = System.currentTimeMillis() + timeoutMs;
         while (System.currentTimeMillis() < end) {
-            if (isConfirmPurchaseScreen()
+            if (AhInstantConfirm.clickedAt() > 0
+                    || isConfirmPurchaseScreen()
                     || AhScreenUtil.currentScreen() == AhScreenUtil.AhScreen.CONFIRM_PURCHASE) {
                 return true;
             }
-            ScreenUtil.sleep(50);
+            ScreenUtil.sleep(20);
         }
-        return false;
+        return AhInstantConfirm.clickedAt() > 0;
     }
 
     private static boolean spamConfirmButton() {
         long deadline = System.currentTimeMillis() + 10_000;
+        long instant = AhInstantConfirm.clickedAt();
+        if (instant <= 0) {
+            // The instant click did not happen (no readable price): the worker clicks.
+            AhInstantConfirm.disarm();
+            instant = AhInstantConfirm.clickedAt();
+        }
+        int clicks = 0;
         while (running && System.currentTimeMillis() <= deadline) {
-            int confirm = findConfirmPurchaseSlot();
-            if (confirm < 0) {
+            final boolean waitForInstant = instant > 0 && clicks == 0
+                    && System.currentTimeMillis() - instant < 300;
+            // Retries are left clicks, in case the menu ignored the middle click.
+            final boolean left = clicks > 0 || instant > 0;
+            Integer confirm = ScreenUtil.sync(() -> {
+                int slot = findConfirmPurchaseSlot();
+                if (slot < 0) {
+                    return -1;
+                }
+                if (waitForInstant) {
+                    return -2; // the instant click is still on its way
+                }
+                if (left) {
+                    ScreenUtil.clickNow(slot, 0);
+                } else {
+                    ScreenUtil.middleClickNow(slot);
+                }
+                return slot;
+            });
+            if (confirm != null && confirm == -1) {
                 return true;
             }
-            ScreenUtil.clickSlot(confirm, 0);
+            if (confirm == null || confirm == -2) {
+                ScreenUtil.sleep(20);
+                continue;
+            }
+            clicks++;
             // The first click decides; a second one is only useful if the first
             // came too early, and each extra one causes an error line + refund.
             ScreenUtil.sleep(Math.max(250L, clickDelay()));
@@ -3648,12 +3972,6 @@ public class AhFlipperMod {
             AhLiveScanner.stop();
             message("§6[AH-Flipper] §7Live-Feed §caus");
         }
-        return 1;
-    }
-
-    private static int automationsCommand(CommandContext<FabricClientCommandSource> context) {
-        net.minecraft.client.Minecraft client = net.minecraft.client.Minecraft.getInstance();
-        client.gui.setScreen(com.coflnet.gui.cofl.CoflSettingsScreen.create(client.gui.screen()));
         return 1;
     }
 
