@@ -3028,8 +3028,14 @@ public class AhFlipperMod {
             if (!buyClicked && !purchaseAttempted) {
                 // The buy button never got through, so nothing can have been
                 // bought: no claim/recovery run afterwards.
-                System.out.println("[AH-Flipper] Kaufbutton nicht aktiv");
-                message("\u00a7cBuy button not active - cancelled.");
+                String reason = buyGiveUpReason;
+                System.out.println("[AH-Flipper] Kaufbutton nicht aktiv (" + reason + ")");
+                message(switch (reason) {
+                    case "sold" -> "\u00a7eSomeone else bought it first - cancelled.";
+                    case "closed" -> "\u00a7cAuction view closed - cancelled.";
+                    case "timeout" -> "\u00a7cBuy button stayed inactive for " + (BUY_SPAM_MS / 1000) + "s - cancelled.";
+                    default -> "\u00a7cBuy button not active - cancelled.";
+                });
                 AhScreenUtil.dumpScreen();
                 ScreenUtil.closeCurrentScreen();
                 return;
@@ -3785,9 +3791,18 @@ public class AhFlipperMod {
         return clicks >= 6 && clicks % 2 == 1;
     }
 
+    /**
+     * How long the buy button is spammed (grace period of fresh BIN auctions). 25 s gave up
+     * 10-20 s too early.
+     */
+    private static final long BUY_SPAM_MS = 45_000L;
+    /** Why the last spamBuyButton() gave up (for the chat message). */
+    private static volatile String buyGiveUpReason = "";
+
     private static boolean spamBuyButton() {
+        buyGiveUpReason = "";
         long start = System.currentTimeMillis();
-        long deadline = start + 25_000;
+        long deadline = start + BUY_SPAM_MS;
         long lastUnavailableCheck = start;
         boolean loggedCooldown = false;
         int clicks = 0;
@@ -3801,6 +3816,7 @@ public class AhFlipperMod {
                 if (AhScreenUtil.currentAuctionUnavailable()) {
                     System.out.println("[AH-Flipper] Kauf abgebrochen: "
                             + "Auktion nicht mehr verfügbar");
+                    buyGiveUpReason = "sold";
                     return false;
                 }
             }
@@ -3840,18 +3856,37 @@ public class AhFlipperMod {
             }
             if (click.state() == BuyClick.LEFT_VIEW) {
                 // When the grace period ends the BIN view is replaced by
-                // "Confirm Purchase"; for a moment neither is open. Giving up
-                // here cancelled purchases right when the button became active.
-                return waitForConfirmPurchase(2_000L);
+                // "Confirm Purchase"; for a moment neither is open. Hypixel also
+                // reopens the BIN view now and then: then keep spamming.
+                long viewDeadline = System.currentTimeMillis() + 3_000L;
+                boolean binBack = false;
+                while (System.currentTimeMillis() < viewDeadline) {
+                    if (AhInstantConfirm.clickedAt() > 0 || isConfirmPurchaseScreen()) {
+                        return true;
+                    }
+                    if (AhScreenUtil.currentScreen() == AhScreenUtil.AhScreen.BIN_VIEW) {
+                        binBack = true;
+                        break;
+                    }
+                    ScreenUtil.sleep(20);
+                }
+                if (!binBack) {
+                    buyGiveUpReason = "closed";
+                    return AhInstantConfirm.clickedAt() > 0;
+                }
+                continue;
             }
             clicks++;
             if (click.cooldown() && !loggedCooldown) {
-                deadline = Math.max(deadline, start + 25_000);
+                deadline = Math.max(deadline, start + BUY_SPAM_MS);
                 System.out.println("[AH-Flipper] Buy-Cooldown: spame Slot " + click.slot()
-                        + " mit 30-35 CPS fuer 25s");
+                        + " mit 30-35 CPS fuer " + (BUY_SPAM_MS / 1000) + "s");
                 loggedCooldown = true;
             }
             ScreenUtil.sleep(click.cooldown() ? cooldownClickDelay() : clickDelay());
+        }
+        if (System.currentTimeMillis() > deadline) {
+            buyGiveUpReason = "timeout";
         }
         return AhInstantConfirm.clickedAt() > 0
                 || AhScreenUtil.currentScreen() == AhScreenUtil.AhScreen.CONFIRM_PURCHASE;

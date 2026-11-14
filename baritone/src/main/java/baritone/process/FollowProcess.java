@@ -55,7 +55,9 @@ public final class FollowProcess extends BaritoneProcessHelper implements IFollo
      * walking target does not cancel and recalculate the path every tick.
      */
     private final Map<Entity, BlockPos> anchors = new HashMap<>();
-    private static final double REANCHOR_DIST_SQ = 9.0;
+    private static final double REANCHOR_DIST_SQ = 4.0;
+    private static final long REANCHOR_MIN_MS = 400L;
+    private long lastReanchorAt;
 
     public FollowProcess(Baritone baritone) {
         super(baritone);
@@ -80,9 +82,12 @@ public final class FollowProcess extends BaritoneProcessHelper implements IFollo
             return new GoalBlock(pos);
         }
         BlockPos anchor = anchors.get(following);
-        if (anchor == null || (anchor.distSqr(pos) >= REANCHOR_DIST_SQ && canReplanNow())) {
+        long now = System.currentTimeMillis();
+        if (anchor == null || (anchor.distSqr(pos) >= REANCHOR_DIST_SQ && canReplanNow()
+                && now - lastReanchorAt >= REANCHOR_MIN_MS)) {
             anchor = pos.immutable();
             anchors.put(following, anchor);
+            lastReanchorAt = now;
         }
         return new GoalNear(anchor, Baritone.settings().followRadius.value);
     }

@@ -53,10 +53,16 @@ public final class VisibleGoal implements Goal {
     public static Goal of(Level level, Entity target, int radius, double maxReach) {
         BlockPos center = target.blockPosition();
         LongOpenHashSet spots = new LongOpenHashSet();
+        LongOpenHashSet good = new LongOpenHashSet();
         int used = radius;
         for (int r = radius; r <= radius + EXTRA_RADIUS && spots.isEmpty(); r++) {
             used = r;
-            collect(level, target, center, r, maxReach, spots);
+            collect(level, target, center, r, maxReach, spots, good);
+        }
+        // Spots on the target's level and not on top of leaves first: the bot used to pick a
+        // spot up in a tree just because it saw the mob from there.
+        if (!good.isEmpty()) {
+            spots = good;
         }
         if (spots.isEmpty()) {
             return new GoalNear(center, radius);
@@ -65,7 +71,7 @@ public final class VisibleGoal implements Goal {
     }
 
     private static void collect(Level level, Entity target, BlockPos center, int radius, double maxReach,
-                                LongOpenHashSet spots) {
+                                LongOpenHashSet spots, LongOpenHashSet good) {
         int r2 = radius * radius;
         double reach2 = maxReach * maxReach;
         for (int dx = -radius; dx <= radius; dx++) {
@@ -83,7 +89,12 @@ public final class VisibleGoal implements Goal {
                         continue;
                     }
                     if (seesAny(level, eye, target)) {
-                        spots.add(BetterBlockPos.longHash(pos.getX(), pos.getY(), pos.getZ()));
+                        long hash = BetterBlockPos.longHash(pos.getX(), pos.getY(), pos.getZ());
+                        spots.add(hash);
+                        boolean onLeaves = level.getBlockState(pos.below()).is(net.minecraft.tags.BlockTags.LEAVES);
+                        if (Math.abs(dy) <= 1 && !onLeaves) {
+                            good.add(hash);
+                        }
                     }
                 }
             }

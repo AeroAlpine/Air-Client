@@ -1093,6 +1093,12 @@ public final class AhBidMacro {
                 return false;
             }
             PriorityAccess.applyDelay();
+            int bidDelay = Math.clamp(AhFlipperMod.CONFIG.bidMacroDelayMs, 0, 1000);
+            if (bidDelay > 0) {
+                // configured wait before the bid, +-1 ms so it is never exactly the same
+                ScreenUtil.sleep(Math.max(0, bidDelay
+                        + java.util.concurrent.ThreadLocalRandom.current().nextInt(-1, 2)));
+            }
             if (!submitAndConfirmBid(slot)) {
                 System.out.println("[AH-Flipper] Bid-Macro: Submit/Confirm fehlgeschlagen: "
                         + item.displayName);

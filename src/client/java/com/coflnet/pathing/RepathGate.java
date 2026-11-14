@@ -11,8 +11,9 @@ import net.minecraft.world.entity.player.Player;
  * the player stands (or swims / climbs) and the last request is a moment ago.
  */
 public final class RepathGate {
-    public static final int MOVE_BLOCKS = 3;
-    public static final long MIN_INTERVAL_MS = 500L;
+    /** 2 blocks: with 3 the bot walked to where the target had been for too long. */
+    public static final int MOVE_BLOCKS = 2;
+    public static final long MIN_INTERVAL_MS = 350L;
 
     private RepathGate() {
     }

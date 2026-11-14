@@ -306,9 +306,16 @@ public class PathExecutor implements IPathExecutor, Helper {
             if (path.movements().get(pathPosition) instanceof MovementFall) {
                 BlockPos fallDest = path.positions().get(pathPosition + 1); // .get(pathPosition) is the block we fell off of
                 return VecUtils.entityFlatDistanceToCenter(ctx.player(), fallDest) >= leniency; // ignore Y by using flat distance
-            } else {
-                return true;
             }
+            // Air Client: a high jump (jump boost) lifts the player several blocks above the
+            // path. Cancelling there re-planned from mid-air: a fall from the apex, during which
+            // the server set the player back again and again. Above the path only the flat
+            // distance counts while in the air.
+            if (!ctx.player().onGround() && status.second() != null
+                    && ctx.player().position().y > status.second().getY()) {
+                return VecUtils.entityFlatDistanceToCenter(ctx.player(), status.second()) >= leniency;
+            }
+            return true;
         } else {
             return false;
         }

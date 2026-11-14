@@ -605,6 +605,8 @@ public final class  ClickGuiScreen extends Screen {
             toggle(pathfinder,"Allow parkour",()->pf.allowParkour,()->{pf.allowParkour=!pf.allowParkour;pf.save();});
             toggle(pathfinder,"Allow sprint",()->pf.allowSprint,()->{pf.allowSprint=!pf.allowSprint;pf.save();});
             options(pathfinder,"Tuning",()-> {
+                add(pathfinder,new CombatSlider(panelWidth-20,"Max turn (deg/tick)",10,180,5,
+                        ()->pf.maxTurnPerTick,v->{pf.maxTurnPerTick=v;pf.save();}),26);
                 add(pathfinder,new CombatSlider(panelWidth-20,"Jump penalty",0,10,.5,
                         ()->pf.jumpPenalty,v->{pf.jumpPenalty=v;pf.save();}),26);
                 add(pathfinder,new CombatSlider(panelWidth-20,"Search speed",1,5,.1,
@@ -784,6 +786,11 @@ public final class  ClickGuiScreen extends Screen {
             add(skyblock,new CombatSlider(panelWidth-20,"Bid max minutes (max 120)",10,120,5,
                     ()->AhFlipperMod.CONFIG.bidMacroMaxRemainingMinutes,v-> {
                 AhFlipperMod.CONFIG.bidMacroMaxRemainingMinutes=(int)Math.round(v);
+                AhFlipperMod.CONFIG.save();
+            }),26);
+            add(skyblock,new CombatSlider(panelWidth-20,"Bid delay (ms)",0,1000,10,
+                    ()->AhFlipperMod.CONFIG.bidMacroDelayMs,v-> {
+                AhFlipperMod.CONFIG.bidMacroDelayMs=(int)Math.round(v);
                 AhFlipperMod.CONFIG.save();
             }),26);
             add(skyblock,new CombatSlider(panelWidth-20,"Bids per scan",1,15,1,

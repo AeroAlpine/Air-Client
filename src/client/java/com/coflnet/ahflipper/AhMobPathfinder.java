@@ -345,7 +345,9 @@ public final class AhMobPathfinder {
         settings.assumeStep.value = false;
         settings.assumeSafeWalk.value = false;
         settings.allowWaterBucketFall.value = false;
-        settings.freeLook.value = false;
+        // The camera is steered by frame() below; Baritone only sends its (turn-limited)
+        // rotation with the movement. Both turning the camera made it twitch.
+        settings.freeLook.value = true;
         settings.blockFreeLook.value = false;
         settings.smoothLook.value = false;
         settings.randomLooking.value = 0.01;

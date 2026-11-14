@@ -1393,8 +1393,14 @@ public class Trader {
             }
         }
         existing.addAll(scannedOrderProductIds);
-        existing.addAll(BazaarLimits.excludedByItemMode(cfg, data));
-        List<FlipAnalyzer.FlipPlan> plans = FlipAnalyzer.compute(data, cfg, bankroll, existing, availableSlots, this::isStopRequested, 3000L);
+        List<FlipAnalyzer.FlipPlan> plans;
+        if (BazaarLimits.itemModeActive(cfg)) {
+            // Item mode: no analysis, just buy the listed items (selling runs as usual).
+            plans = itemModePlans(data, bankroll, availableSlots, existing);
+        } else {
+            existing.addAll(BazaarLimits.excludedByItemMode(cfg, data));
+            plans = FlipAnalyzer.compute(data, cfg, bankroll, existing, availableSlots, this::isStopRequested, 3000L);
+        }
         cachePlans(plans);
         log("Neue Käufe: " + plans.size() + " Kandidaten, Bankroll=" + bankroll + ", Slots=" + availableSlots);
         int placed = 0;
@@ -1481,8 +1487,80 @@ public class Trader {
         }
     }
 
+    /**
+     * Item mode: one buy order per listed item that has no open order yet, at the best buy
+     * order + 0.1, to be sold at the best offer - 0.1 like any other flip. No scoring, volume or
+     * margin filters: the only thing checked is that the spread pays after tax.
+     */
+    private List<FlipAnalyzer.FlipPlan> itemModePlans(MarketData data, double bankroll, int slots,
+                                                      Set<String> skip) {
+        List<FlipAnalyzer.FlipPlan> plans = new ArrayList<>();
+        List<String> products = BazaarLimits.itemModeProducts(cfg, data);
+        if (products.isEmpty()) {
+            log("Item-Modus: kein Listen-Item im Bazaar gefunden: " + cfg.onlyItems);
+            return plans;
+        }
+        double budget = bankroll * cfg.maxBankFractionPerItem;
+        if (cfg.maxCoinsPerItem > 0) {
+            budget = Math.min(budget, cfg.maxCoinsPerItem);
+        }
+        int freeSlots = ScreenUtil.freeInventorySlots();
+        double taxFactor = 1.0 - cfg.taxPercent / 100.0;
+        for (String productId : products) {
+            if (plans.size() >= slots) {
+                break;
+            }
+            String name = ItemNames.displayName(productId);
+            if (skip.contains(productId)) {
+                log("Item-Modus: " + name + " hat schon eine Order / ist gesperrt");
+                continue;
+            }
+            MarketData.Product product = data.products.get(productId);
+            if (product == null || product.bestBid <= 0 || product.bestAsk <= 0) {
+                log("Item-Modus: keine Preise für " + name);
+                continue;
+            }
+            double buy = Math.round((product.bestBid + 0.1) * 10.0) / 10.0;
+            double sell = Math.round((product.bestAsk - 0.1) * 10.0) / 10.0;
+            double profit = sell * taxFactor - buy;
+            if (profit <= 0) {
+                log(String.format(java.util.Locale.US,
+                        "Item-Modus: %s lohnt gerade nicht (Kauf %.1f, Verkauf %.1f nach Steuer %.1f)",
+                        name, buy, sell, sell * taxFactor));
+                continue;
+            }
+            double hourly = Math.max(product.sellMovingWeek, product.buyMovingWeek) / 168.0;
+            long qty = (long) Math.floor(budget / buy);
+            qty = Math.min(qty, 71_680L);
+            qty = Math.min(qty, (long) Math.max(1, freeSlots) * 64L);
+            if (hourly > 0) {
+                qty = Math.min(qty, Math.max(1L, (long) Math.ceil(hourly * 2.0)));
+            }
+            if (qty < 1) {
+                log("Item-Modus: Budget reicht nicht für " + name + " (" + ScreenUtil.formatCoins(buy) + ")");
+                continue;
+            }
+            FlipAnalyzer.FlipPlan plan = new FlipAnalyzer.FlipPlan();
+            plan.productId = productId;
+            plan.displayName = name;
+            plan.buyPrice = buy;
+            plan.sellPrice = sell;
+            plan.profitPerUnit = profit;
+            plan.marginPercent = profit / buy * 100.0;
+            plan.hourlyVolume = hourly;
+            plan.qty = qty;
+            plan.stake = qty * buy;
+            plan.score = profit * qty;
+            plans.add(plan);
+            log(String.format(java.util.Locale.US, "Item-Modus: %dx %s kaufen @ %.1f, verkaufen @ %.1f (+%.1f/Stück)",
+                    qty, name, buy, sell, profit));
+        }
+        return plans;
+    }
+
     private void replaceWorstOrderIfWorthwhile(MarketData data, long purse) {
-        if (BazaarDailyLimit.reached() || BazaarLimits.sessionCapReached(cfg)) {
+        if (BazaarDailyLimit.reached() || BazaarLimits.sessionCapReached(cfg)
+                || BazaarLimits.itemModeActive(cfg)) {
             return;
         }
         int open = lastScannedOrderCount;

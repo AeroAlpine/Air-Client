@@ -47,6 +47,11 @@ public final class FollowFeature {
     private static float lookPitch;
     private static long lastFrameNanos;
     private static net.minecraft.client.KeyMapping toggleKey;
+    /** Ticks the attacked target was hidden / visible in a row, and whether we walk closer. */
+    private static int hiddenTicks;
+    private static int visibleTicks;
+    private static boolean closeIn;
+    private static final int HIDDEN_SWITCH_TICKS = 10;
 
     private FollowFeature() {
     }
@@ -146,9 +151,24 @@ public final class FollowFeature {
         }
         Entity current = followed;
         LivingEntity attack = PlayerSettings.followAttack ? attackable(current) : null;
-        // Leaves or a wall between us and the target: get closer until it is visible.
-        boolean hidden = attack != null && !player.hasLineOfSight(current);
-        configure(hidden);
+        // Leaves or a wall between us and the target: get closer until it is visible. Only after
+        // it stayed hidden / visible for half a second and only on the ground: switching on every
+        // flicker of the line of sight (each jump) re-planned the path constantly.
+        if (attack != null && !player.hasLineOfSight(current)) {
+            hiddenTicks++;
+            visibleTicks = 0;
+        } else {
+            visibleTicks++;
+            hiddenTicks = 0;
+        }
+        if (player.onGround()) {
+            if (!closeIn && hiddenTicks >= HIDDEN_SWITCH_TICKS) {
+                closeIn = true;
+            } else if (closeIn && visibleTicks >= HIDDEN_SWITCH_TICKS) {
+                closeIn = false;
+            }
+        }
+        configure(closeIn && attack != null);
         IFollowProcess follow = baritone.getFollowProcess();
         EntityObstacles.setTarget(current);
         if (issued != current || !follow.isActive()) {

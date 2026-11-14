@@ -95,6 +95,22 @@ public final class BazaarLimits {
         return cfg.onlyItemsMode && cfg.onlyItems != null && !cfg.onlyItems.isEmpty();
     }
 
+    /** Item mode: the listed products that exist on the Bazaar, as product ids. */
+    public static java.util.List<String> itemModeProducts(FlipperConfig cfg, MarketData data) {
+        java.util.List<String> result = new java.util.ArrayList<>();
+        if (!itemModeActive(cfg) || data == null) {
+            return result;
+        }
+        migrateItemList(cfg, data);
+        for (String productId : data.products.keySet()) {
+            if (allowed(cfg.onlyItems, productId, ItemNames.displayName(productId))) {
+                result.add(productId);
+            }
+        }
+        result.sort(String::compareTo);
+        return result;
+    }
+
     /** In item mode: every product that is not listed (the analyzer skips them). */
     static Set<String> excludedByItemMode(FlipperConfig cfg, MarketData data) {
         Set<String> excluded = new HashSet<>();

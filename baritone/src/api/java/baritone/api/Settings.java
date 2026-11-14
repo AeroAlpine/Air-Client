@@ -802,6 +802,13 @@ public final class Settings {
     public final Setting<Integer> smoothLookTicks = new Setting<>(5);
 
     /**
+     * Air Client: the most the yaw sent to the server may change in one tick (degrees), 0 = no
+     * limit. Baritone turned up to 180 degrees in a single tick, which looked twitchy and is
+     * exactly what an anticheat watches.
+     */
+    public final Setting<Float> maxYawChangePerTick = new Setting<>(0f);
+
+    /**
      * When true, the player will remain with its existing look direction as often as possible.
      * Although, in some cases this can get it stuck, hence this setting to disable that behavior.
      */
