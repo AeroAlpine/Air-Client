@@ -1,6 +1,6 @@
 <img width="2171" alt="Logo" src="https://github.com/user-attachments/assets/89dae206-827e-4909-95d3-ef8a4218c574" />
 
-A Minecraft client with voice chat, Spotify, and a customizable liquid glass interface. It also includes experimental Bazaar and Auction House automation features, subject to the usage restrictions below.
+A Minecraft Fabric client(26.2). LabyMod Voicechat, Skyblock mods like auction/bazaar flipper, auto lowballer, investment tracker and more!
 
 ## How to use
 
