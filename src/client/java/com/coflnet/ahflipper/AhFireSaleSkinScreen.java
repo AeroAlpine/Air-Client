@@ -37,6 +37,19 @@ public final class AhFireSaleSkinScreen extends Screen {
         this.mode = mode == null ? Mode.SCAN : mode;
     }
 
+    /** Screen to go back to on close (the SkyBlock menu); null = back to the game. */
+    private net.minecraft.client.gui.screens.Screen parent;
+
+    public AhFireSaleSkinScreen withParent(net.minecraft.client.gui.screens.Screen parent) {
+        this.parent = parent;
+        return this;
+    }
+
+    @Override
+    public void onClose() {
+        minecraft.gui.setScreen(parent);
+    }
+
     @Override
     protected void init() {
         panelWidth = Math.max(460, Math.min(MAX_PANEL_WIDTH, width - 16));

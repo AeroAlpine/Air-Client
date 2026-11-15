@@ -14,6 +14,7 @@ public final class FlipperPanels {
     private static final InvestmentPanel INVESTMENT = new InvestmentPanel();
     private static final ProfitPanel PROFIT = new ProfitPanel();
     private static final LowballingPanel LOWBALLING = new LowballingPanel();
+    private static final CombatPanel COMBAT = new CombatPanel();
     
     private static boolean initialized;
 
@@ -31,6 +32,14 @@ public final class FlipperPanels {
         register(INVESTMENT, 240, 300);
         register(PROFIT, 472, 80);
         register(LOWBALLING, 472, 300);
+        // top right by default, out of the way of the trading panels
+        HudEditor.register(new HudEditor.Entry(COMBAT.id(), COMBAT.title(),
+                COMBAT::width, COMBAT::height,
+                (width, height) -> Math.max(8, width - COMBAT.width() - 8),
+                (width, height) -> 40,
+                COMBAT::visible,
+                (graphics, mouseX, mouseY, delta, editing) -> COMBAT.render(graphics, editing),
+                List::of, true));
         
         if (AhFlipperMod.CONFIG.investmentPanelEnabled
                 || AhFlipperMod.CONFIG.investmentGui) {
@@ -57,6 +66,7 @@ public final class FlipperPanels {
         INVESTMENT.update();
         PROFIT.update();
         LOWBALLING.update();
+        COMBAT.update();
     }
 }
 

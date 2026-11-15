@@ -27,6 +27,19 @@ public final class AhInvestmentScreen extends Screen {
         super(Component.literal("Investment Tracker"));
     }
 
+    /** Screen to go back to on close (the SkyBlock menu); null = back to the game. */
+    private net.minecraft.client.gui.screens.Screen parent;
+
+    public AhInvestmentScreen withParent(net.minecraft.client.gui.screens.Screen parent) {
+        this.parent = parent;
+        return this;
+    }
+
+    @Override
+    public void onClose() {
+        minecraft.gui.setScreen(parent);
+    }
+
     @Override
     protected void init() {
         panelWidth = Math.max(420, Math.min(MAX_PANEL_WIDTH, width - 16));
@@ -40,7 +53,7 @@ public final class AhInvestmentScreen extends Screen {
         addRenderableWidget(actionButton(panelX + 92, footerY, 90, 18, "Fire Sale",
                 AhFlipperMod::openFireSaleGui));
         addRenderableWidget(actionButton(panelX + 188, footerY, 90, 18, "Bazaar Flips",
-                () -> minecraft.gui.setScreen(new BazaarFlipScreen())));
+                () -> minecraft.gui.setScreen(new BazaarFlipScreen().withParent(parent))));
         addRenderableWidget(actionButton(panelX + panelWidth - 86, footerY, 78, 18,
                 "Close", this::onClose));
     }

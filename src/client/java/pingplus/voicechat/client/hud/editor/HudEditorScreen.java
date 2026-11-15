@@ -52,10 +52,18 @@ public final class HudEditorScreen extends Screen {
         return super.keyPressed(event);
     }
 
+    /** Screen to go back to on close (the SkyBlock menu's Customize); null = back to the game. */
+    private Screen parent;
+
+    public HudEditorScreen withParent(Screen parent) {
+        this.parent = parent;
+        return this;
+    }
+
     @Override public void onClose() {
         HudEditor.finish();
         HudEditor.controls().forEach(control -> control.setFocused(false));
-        minecraft.gui.setScreen(null);
+        minecraft.gui.setScreen(parent);
     }
 
     @Override protected void updateNarrationState(NarrationElementOutput output) {

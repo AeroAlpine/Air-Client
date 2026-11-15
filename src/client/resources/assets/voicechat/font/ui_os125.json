@@ -1,0 +1,26 @@
+{
+  "providers": [
+    {
+      "type": "ttf",
+      "file": "voicechat:rajdhani.ttf",
+      "shift": [
+        0,
+        0
+      ],
+      "size": 11,
+      "oversample": 1.25
+    },
+    {
+      "type": "reference",
+      "id": "minecraft:include/space"
+    },
+    {
+      "type": "reference",
+      "id": "minecraft:include/default"
+    },
+    {
+      "type": "reference",
+      "id": "minecraft:include/unifont"
+    }
+  ]
+}

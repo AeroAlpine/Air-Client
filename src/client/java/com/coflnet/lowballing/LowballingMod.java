@@ -460,6 +460,11 @@ public final class LowballingMod {
             message("§c[Lowballing] kann nur auf Hypixel SkyBlock gestartet werden.");
             return;
         }
+        if (com.coflnet.flipper.FlipperMod.isRunning()) {
+            // both need the player for themselves (menus, hub walking): never at the same time
+            message("§6[Lowballing] §cCan't start while the Bazaar Flipper is running. §7Stop the Bazaar Flipper first.");
+            return;
+        }
         running = true;
         cycles = 0;
         targetHub = CONFIG.hubStartNumber;

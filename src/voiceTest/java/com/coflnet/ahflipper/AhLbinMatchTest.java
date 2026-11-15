@@ -89,6 +89,8 @@ public final class AhLbinMatchTest {
         check(AhItemValueTooltip.isOwnLine("Lowest Addon-BIN: 5M"), "own addon bin line");
         check(AhItemValueTooltip.isOwnLine("[AH-Flipper] Wert: 2.75M (clean)"), "own value line");
         check(!AhItemValueTooltip.isOwnLine("Lbin: 2.75M"), "market line is not ours");
+        check(AhItemValueTooltip.isOwnLine("Estimated Item Value: 2.75M"), "own value line (new)");
+        check(AhItemValueTooltip.isOwnLine("  Value median: 3.2M"), "own median line (new)");
 
         AhItem.CoflValues values = AhItem.parseCoflValues(List.of(
                 "Lbin: 2.75M", "Med: 3.1M", "Value-LBin: 2.8M", "Value-Median: 3.2M"));

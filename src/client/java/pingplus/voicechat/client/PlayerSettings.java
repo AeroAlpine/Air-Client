@@ -91,6 +91,12 @@ public final class PlayerSettings {
     public static double followCpsMax = 12;
     /** Combat one-hit mode: one click per target, then straight on to the next (already picked) one. */
     public static boolean combatOneHit = false;
+    /** Combat on-screen panel (like the other bots' panels). */
+    public static boolean combatPanel = true;
+    public static boolean combatPanelGlass = true;
+    public static boolean combatPanelEdges = true;
+    public static boolean combatPanelFooter = true;
+    public static int combatPanelRows = 3;
 
     static {
         load();

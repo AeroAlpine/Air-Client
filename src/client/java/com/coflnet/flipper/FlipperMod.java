@@ -139,6 +139,11 @@ public class FlipperMod {
             message("§cFlipper kann nur auf Hypixel SkyBlock gestartet werden.");
             return 1;
         }
+        if (com.coflnet.lowballing.LowballingMod.isRunning()) {
+            // both need the player for themselves (menus, hub walking): never at the same time
+            message("§6[Flipper] §cCan't start while Lowballing is running. §7Stop Lowballing first.");
+            return 1;
+        }
         Trader.get().start();
         return 1;
     }
