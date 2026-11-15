@@ -40,6 +40,35 @@ public record PlayerMovementStats(double jumpVelocity, double gravity, double ju
         return y;
     }
 
+    /**
+     * Ticks in the air for a jump onto a block one higher, simulated like
+     * {@link #maxJumpHeight}. Vanilla: ~9. A height the jump does not reach counts the full arc.
+     */
+    public static int airTicksOntoBlock(double velocity, double gravity) {
+        if (velocity <= 0) {
+            return 0;
+        }
+        double g = gravity <= 0 ? 0.08 : gravity;
+        double y = 0;
+        double v = velocity;
+        for (int tick = 1; tick < 200; tick++) {
+            y += v;
+            v = (v - g) * 0.98;
+            if (v < 0 && y <= 1.0) {
+                return tick;
+            }
+        }
+        return 200;
+    }
+
+    /**
+     * How much longer than a vanilla jump one jump onto a block keeps the player in the air.
+     * With strong Jump Boost every step up becomes a 6 block flight (~25 ticks instead of ~9).
+     */
+    public double extraAirTicks() {
+        return Math.max(0, airTicksOntoBlock(jumpVelocity, gravity) - airTicksOntoBlock(0.42, 0.08));
+    }
+
     public static PlayerMovementStats read(LocalPlayer player) {
         if (player == null) {
             return VANILLA;

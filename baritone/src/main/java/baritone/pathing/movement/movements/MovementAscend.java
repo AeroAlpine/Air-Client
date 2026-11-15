@@ -220,6 +220,12 @@ public class MovementAscend extends Movement {
             return state;
         }
 
+        if (ctx.player().onGround() && !MovementHelper.needsJump(ctx, dest)) {
+            // Air Client: from a slab / the top of a stair the next block is only half a block
+            // higher: walk up. A jump there (6 blocks with Jump Boost) looked like a bot.
+            return state;
+        }
+
         if (Baritone.settings().assumeStep.value || ctx.playerFeet().equals(src.above())) {
             // no need to hit space if we're already jumping
             return state;

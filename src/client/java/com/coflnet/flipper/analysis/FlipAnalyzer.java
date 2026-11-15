@@ -54,17 +54,60 @@ public class FlipAnalyzer {
                                          Set<String> existingProductIds, int availableSlots,
                                          java.util.function.BooleanSupplier cancel,
                                          long budgetMs) {
-        List<FlipPlan> plans = new ArrayList<>();
-        long deadline = budgetMs > 0 ? System.currentTimeMillis() + budgetMs : 0;
-        if (data == null || bankroll <= 0 || availableSlots <= 0) {
-            return plans;
+        if (availableSlots <= 0) {
+            return new ArrayList<>();
         }
-        double taxFactor = 1.0 - cfg.taxPercent / 100.0;
-        double checkHours = Math.max(1.0, cfg.undercutCheckMinutes) / 60.0;
+        List<FlipPlan> withinLimit = candidates(data, cfg, bankroll, existingProductIds, cancel, budgetMs);
+        double budgetPerItem = budgetPerItem(cfg, bankroll);
+
+        double remainingCoins = bankroll;
+        List<FlipPlan> result = new ArrayList<>();
+        for (FlipPlan plan : withinLimit) {
+            if (result.size() >= availableSlots) {
+                break;
+            }
+            double affordableCoins = Math.min(remainingCoins, budgetPerItem);
+            long affordable = (long) Math.floor(affordableCoins / plan.buyPrice);
+            long qty = Math.min(plan.qty, affordable);
+            if (qty < 1) {
+                continue;
+            }
+            if (qty * plan.buyPrice < cfg.minOrderCoins) {
+                continue;
+            }
+            plan.qty = qty;
+            plan.stake = qty * plan.buyPrice;
+            remainingCoins -= plan.stake;
+            result.add(plan);
+        }
+        return result;
+    }
+
+    private static double budgetPerItem(FlipperConfig cfg, double bankroll) {
         double budgetPerItem = bankroll * cfg.maxBankFractionPerItem;
         if (cfg.maxCoinsPerItem > 0) {
             budgetPerItem = Math.min(budgetPerItem, cfg.maxCoinsPerItem);
         }
+        return budgetPerItem;
+    }
+
+    /**
+     * Every product that passes the flipper's filters, scored and sorted by score (best first),
+     * before the bankroll is split over the free order slots. The flipper takes the top ones of
+     * this list; the Bazaar flips screen shows it.
+     */
+    public static List<FlipPlan> candidates(MarketData data, FlipperConfig cfg, double bankroll,
+                                            Set<String> existingProductIds,
+                                            java.util.function.BooleanSupplier cancel,
+                                            long budgetMs) {
+        List<FlipPlan> plans = new ArrayList<>();
+        long deadline = budgetMs > 0 ? System.currentTimeMillis() + budgetMs : 0;
+        if (data == null || bankroll <= 0) {
+            return plans;
+        }
+        double taxFactor = 1.0 - cfg.taxPercent / 100.0;
+        double checkHours = Math.max(1.0, cfg.undercutCheckMinutes) / 60.0;
+        double budgetPerItem = budgetPerItem(cfg, bankroll);
         if (budgetPerItem < 1) {
             return plans;
         }
@@ -248,27 +291,6 @@ public class FlipAnalyzer {
         }
         withinLimit.removeIf(plan -> plan.score <= 0);
         withinLimit.sort(Comparator.comparingDouble((FlipPlan plan) -> plan.score).reversed());
-
-        double remainingCoins = bankroll;
-        List<FlipPlan> result = new ArrayList<>();
-        for (FlipPlan plan : withinLimit) {
-            if (result.size() >= availableSlots) {
-                break;
-            }
-            double affordableCoins = Math.min(remainingCoins, budgetPerItem);
-            long affordable = (long) Math.floor(affordableCoins / plan.buyPrice);
-            long qty = Math.min(plan.qty, affordable);
-            if (qty < 1) {
-                continue;
-            }
-            if (qty * plan.buyPrice < cfg.minOrderCoins) {
-                continue;
-            }
-            plan.qty = qty;
-            plan.stake = qty * plan.buyPrice;
-            remainingCoins -= plan.stake;
-            result.add(plan);
-        }
-        return result;
+        return withinLimit;
     }
 }

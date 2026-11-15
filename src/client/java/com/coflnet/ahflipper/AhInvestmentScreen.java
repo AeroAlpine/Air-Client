@@ -39,6 +39,8 @@ public final class AhInvestmentScreen extends Screen {
                 AhInvestmentTracker::requestRefresh));
         addRenderableWidget(actionButton(panelX + 92, footerY, 90, 18, "Fire Sale",
                 AhFlipperMod::openFireSaleGui));
+        addRenderableWidget(actionButton(panelX + 188, footerY, 90, 18, "Bazaar Flips",
+                () -> minecraft.gui.setScreen(new BazaarFlipScreen())));
         addRenderableWidget(actionButton(panelX + panelWidth - 86, footerY, 78, 18,
                 "Close", this::onClose));
     }
@@ -298,7 +300,7 @@ public final class AhInvestmentScreen extends Screen {
         return value.substring(0, Math.max(0, max - 1)) + "\u2026";
     }
 
-    private static ItemStack iconFor(String tag) {
+    static ItemStack iconFor(String tag) {
         String upper = tag == null ? "" : tag.toUpperCase(Locale.ROOT);
         if (upper.contains("DIAMOND")) {
             return Items.DIAMOND.getDefaultInstance();

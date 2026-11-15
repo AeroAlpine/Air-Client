@@ -682,6 +682,28 @@ public interface MovementHelper extends ActionCosts, Helper {
     }
 
     /**
+     * Air Client: does reaching {@code dest} (feet position) need a jump, or does the player's
+     * step height carry it up (stairs, slabs, half steps)? Measured from the real feet height,
+     * not the block position: on a bottom slab the feet block is one lower than the height says.
+     */
+    static boolean needsJump(IPlayerContext ctx, BlockPos dest) {
+        double rise = floorHeight(ctx, dest) - ctx.player().position().y;
+        return rise > ctx.player().maxUpStep() + 1.0E-3;
+    }
+
+    /** Height of the surface the player stands on with feet in {@code feet}. */
+    static double floorHeight(IPlayerContext ctx, BlockPos feet) {
+        BlockState at = ctx.world().getBlockState(feet);
+        net.minecraft.world.phys.shapes.VoxelShape shape = at.getCollisionShape(ctx.world(), feet);
+        if (!shape.isEmpty()) {
+            return feet.getY() + shape.max(Direction.Axis.Y);
+        }
+        BlockPos below = feet.below();
+        net.minecraft.world.phys.shapes.VoxelShape belowShape = ctx.world().getBlockState(below).getCollisionShape(ctx.world(), below);
+        return belowShape.isEmpty() ? feet.getY() : below.getY() + belowShape.max(Direction.Axis.Y);
+    }
+
+    /**
      * Air Client: below this horizontal distance to the block centre the yaw towards it is
      * unstable (a few centimetres of drift turn the camera by 90 degrees and more).
      */

@@ -53,10 +53,14 @@ public final class PathfinderConfig {
     public boolean avoidStandingEntities = true;
     /** After a server setback: no parkour / sprint jumps for a while and in that area. */
     public boolean setbackGuard = true;
+    /** Dashed path line on the floor and a box on the bot's target (replaces Baritone's render). */
+    public boolean showPathOverlay = true;
     /** Path recorder: every pathing run is written to logs/pathfinder (plan vs. what happened). */
     public boolean recordPaths = true;
     /** One summary line in chat after each recorded run. */
     public boolean recorderChat = true;
+    /** How calm the camera moves while a bot walks (0 = snappy, 100 = very calm). */
+    public double movementCalmness = 70.0;
     /** Most degrees the walking direction / server rotation may turn per tick (0 = unlimited). */
     public double maxTurnPerTick = 40.0;
 
@@ -132,6 +136,7 @@ public final class PathfinderConfig {
         faultPenaltyStrength = clamp(faultPenaltyStrength, 0.5, 20.0);
         faultHalfLifeHours = clamp(faultHalfLifeHours, 1.0, 24.0 * 30);
         aotvTeleportBlocks = (int) clamp(aotvTeleportBlocks, 4, 20);
+        movementCalmness = clamp(movementCalmness, 0.0, 100.0);
         aotvMinGain = (int) clamp(aotvMinGain, 3, 40);
         if (aotvMode == null || aotvMode.isBlank()) {
             aotvMode = "OFF";

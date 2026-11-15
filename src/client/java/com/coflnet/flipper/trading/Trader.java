@@ -535,6 +535,21 @@ public class Trader {
         }
     }
 
+    /** Start message: is item mode on, and which items it flips. */
+    private String itemModeLine() {
+        if (!cfg.onlyItemsMode) {
+            return "§6[Flipper] §7Item mode §cOFF §7· flips the best Bazaar items (analyzer)";
+        }
+        java.util.List<String> items = cfg.onlyItems == null ? java.util.List.of() : cfg.onlyItems;
+        if (items.isEmpty()) {
+            return "§6[Flipper] §7Item mode §eON §7but the list is empty §8· §7flips the best Bazaar items (analyzer)";
+        }
+        String shown = items.size() <= 4 ? String.join(", ", items)
+                : String.join(", ", items.subList(0, 4)) + " +" + (items.size() - 4);
+        return "§6[Flipper] §7Item mode §aON §7· " + items.size() + " item"
+                + (items.size() == 1 ? "" : "s") + ": §f" + shown;
+    }
+
     private void jitterSleepOrStop(long base, long spread) {
         sleepOrStop(ScreenUtil.jitterAround(base, spread));
     }
@@ -542,6 +557,7 @@ public class Trader {
     private void run() {
         chat("\u00a76[Flipper] \u00a7aBazaar flipper started \u00a77\u00b7 reserve \u00a7f" + ScreenUtil.formatCoins(cfg.reserveCoins) + " \u00a77\u00b7 max orders \u00a7f" + cfg.maxOrders + " \u00a77\u00b7 tax \u00a7f" + cfg.taxPercent + "%"
                 + (cfg.maxCoinsPerItem > 0 ? " \u00a77\u00b7 max/item \u00a7f" + ScreenUtil.formatCoins(cfg.maxCoinsPerItem) : ""));
+        chat(itemModeLine());
         long lastCycleAt = 0;
         long lastHeartbeatAt = System.currentTimeMillis();
         int watchdogStrikes = 0;

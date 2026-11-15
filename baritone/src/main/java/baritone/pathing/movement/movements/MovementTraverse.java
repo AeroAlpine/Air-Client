@@ -250,7 +250,13 @@ public class MovementTraverse extends Movement {
         if (feet.getY() != dest.getY() && !ladder) {
             logDebug("Wrong Y coordinate");
             if (feet.getY() < dest.getY()) {
-                System.out.println("In movement traverse");
+                // Air Client: standing on the low part of a stair / a slab after a descend is
+                // "one block too low" by block position, but only half a block by height. That is
+                // a step, not a jump: with Jump Boost the jump here launched the player 6 blocks.
+                if (!MovementHelper.needsJump(ctx, dest)) {
+                    MovementHelper.moveTowards(ctx, state, dest);
+                    return state;
+                }
                 return state.setInput(Input.JUMP, true);
             }
             return state;
