@@ -159,8 +159,8 @@ final class ClickGuiAllOffGameTest {
             var screen=client.gui.screen();
             Button button=screen.children().stream().filter(Button.class::isInstance).map(Button.class::cast)
                     .filter(w->w.getMessage().getString().equals("All off")).findFirst().orElseThrow();
-            var event=new MouseButtonEvent((button.getX()+button.getWidth()/2.0)*ClickGuiScreen.UI_SCALE,
-                    (button.getY()+8)*ClickGuiScreen.UI_SCALE,new MouseButtonInfo(0,0));
+            var event=new MouseButtonEvent((button.getX()+button.getWidth()/2.0)*ClickGuiScreen.currentScale(),
+                    (button.getY()+8)*ClickGuiScreen.currentScale(),new MouseButtonInfo(0,0));
             check(screen.mouseClicked(event,false),"All off rejected scaled pointer input"); screen.mouseReleased(event);
         });
     }

@@ -133,8 +133,8 @@ public final class FastPlaceGameTest {
             var screen = client.gui.screen();
             var button = screen.children().stream().filter(child -> child instanceof Button).map(child -> (Button)child)
                     .filter(child -> child.getMessage().getString().equals(label)).findFirst().orElseThrow();
-            var down = new MouseButtonEvent((button.getX() + 5) * ClickGuiScreen.UI_SCALE,
-                    (button.getY() + 5) * ClickGuiScreen.UI_SCALE, new MouseButtonInfo(0, 0));
+            var down = new MouseButtonEvent((button.getX() + 5) * ClickGuiScreen.currentScale(),
+                    (button.getY() + 5) * ClickGuiScreen.currentScale(), new MouseButtonInfo(0, 0));
             check(screen.mouseClicked(down, false), "clicked " + label); screen.mouseReleased(down);
         });
     }

@@ -43,6 +43,14 @@ import java.util.function.*;
 public final class  ClickGuiScreen extends Screen {
     /** Render and hit-test in the same logical space, independently of Minecraft GUI scale. */
     public static final float UI_SCALE = 0.60f;
+    /** {@link #UI_SCALE} times the window's share of the screen (smaller outside fullscreen). */
+    private float uiScale = UI_SCALE;
+    private static volatile float currentScale = UI_SCALE;
+
+    /** Scale of the open (or last opened) Controller Center; screen = logical coordinate x scale. */
+    public static float currentScale() {
+        return currentScale;
+    }
     private int canvasWidth, canvasHeight;
     private final FpsHud fpsHud;
     private final CoordinatesHud coordinatesHud;
@@ -52,9 +60,10 @@ public final class  ClickGuiScreen extends Screen {
     private final List<Entry> entries = new ArrayList<>();
     private final List<Runnable> offActions = new ArrayList<>();
     private final Map<String, OptionsPanel> optionPanels = new LinkedHashMap<>();
-    private final Map<String, int[]> positions = new HashMap<>();
-    /** Categories start collapsed; only the ones the user opened stay open. */
-    private final Set<String> expandedCategories = new HashSet<>();
+    /** Where categories were dragged; kept between openings (the screen is new each time). */
+    private final Map<String, int[]> positions = ClickGuiLayout.POSITIONS;
+    /** Categories start collapsed; only the ones the user opened stay open, also after reopening. */
+    private final Set<String> expandedCategories = ClickGuiLayout.EXPANDED;
     private static final int OPTIONS_WIDTH = 220;
     private OptionsPanel buildingOptions;
     private String openOptions;
@@ -78,8 +87,11 @@ public final class  ClickGuiScreen extends Screen {
     }
 
     @Override protected void init() {
-        canvasWidth = (int)(width / UI_SCALE);
-        canvasHeight = (int)(height / UI_SCALE);
+        // init() runs again on every resize (F11), so the scale follows the window.
+        uiScale = UI_SCALE * ClickGuiLayout.scaleFactor(minecraft);
+        currentScale = uiScale;
+        canvasWidth = (int)(width / uiScale);
+        canvasHeight = (int)(height / uiScale);
         categories.clear(); entries.clear(); optionPanels.clear();
         offActions.clear();
         buildingOptions = null;
@@ -589,6 +601,17 @@ public final class  ClickGuiScreen extends Screen {
         options(automation,"Swap interval",()-> {
             add(automation,new SpeedSlider(panelWidth-20),26);
         });
+        // KillAura is no SkyBlock feature: it works everywhere.
+        toggle(automation,"KillAura",()->PlayerSettings.killAura,()->{
+            PlayerSettings.killAura=!PlayerSettings.killAura;
+            if (!PlayerSettings.killAura) pingplus.voicechat.client.KillAuraFeature.clear();
+        });
+        options(automation,"KillAura options",()-> {
+            toggle(automation,"Target players",()->PlayerSettings.killAuraPlayers,()->PlayerSettings.killAuraPlayers=!PlayerSettings.killAuraPlayers);
+            toggle(automation,"Target mobs",()->PlayerSettings.killAuraMobs,()->PlayerSettings.killAuraMobs=!PlayerSettings.killAuraMobs);
+            add(automation,new CombatSlider(panelWidth-20,"Range",1,4,.1,()->PlayerSettings.killAuraRange,v->PlayerSettings.killAuraRange=(float)v),26);
+            add(automation,new CombatSlider(panelWidth-20,"Turn speed",45,540,15,()->PlayerSettings.killAuraTurnSpeed,v->PlayerSettings.killAuraTurnSpeed=(float)v),26);
+        });
         Category pathfinder = category("PATHFINDER", "Baritone tuning and fault learning");
         {
             com.coflnet.pathing.PathfinderConfig pf = com.coflnet.pathing.PathfinderConfig.get();
@@ -972,16 +995,6 @@ public final class  ClickGuiScreen extends Screen {
                     itemListRow(skyblock,target,"Combat",pingplus.voicechat.client.FollowFeature::removeTarget,
                             PlayerSettings::save,"Target removed:","was not a target","Click to remove");
                 }
-            });
-            toggle(skyblock,"KillAura",()->PlayerSettings.killAura,()->{
-                PlayerSettings.killAura=!PlayerSettings.killAura;
-                if (!PlayerSettings.killAura) pingplus.voicechat.client.KillAuraFeature.clear();
-            });
-            options(skyblock,"KillAura options",()-> {
-                toggle(skyblock,"Target players",()->PlayerSettings.killAuraPlayers,()->PlayerSettings.killAuraPlayers=!PlayerSettings.killAuraPlayers);
-                toggle(skyblock,"Target mobs",()->PlayerSettings.killAuraMobs,()->PlayerSettings.killAuraMobs=!PlayerSettings.killAuraMobs);
-                add(skyblock,new CombatSlider(panelWidth-20,"Range",1,4,.1,()->PlayerSettings.killAuraRange,v->PlayerSettings.killAuraRange=(float)v),26);
-                add(skyblock,new CombatSlider(panelWidth-20,"Turn speed",45,540,15,()->PlayerSettings.killAuraTurnSpeed,v->PlayerSettings.killAuraTurnSpeed=(float)v),26);
             });
         }
         toggle(skyblock,"Auto Experiment Table",com.coflnet.experiments.AutoExperimentTable::isEnabled,
@@ -1512,9 +1525,9 @@ public final class  ClickGuiScreen extends Screen {
         animateCategories(dt);
         opacity=closing==0?Math.clamp((System.nanoTime()-opened)/220_000_000f,0,1):1-Math.clamp((System.nanoTime()-closing)/160_000_000f,0,1);
         g.pose().pushMatrix();
-        g.pose().scale(UI_SCALE);
-        mx = (int)(mx / UI_SCALE);
-        my = (int)(my / UI_SCALE);
+        g.pose().scale(uiScale);
+        mx = (int)(mx / uiScale);
+        my = (int)(my / uiScale);
         text(g,"UNTITLED",16,13,GlassStyle.TEXT);text(g,"/  CONTROL CENTER  \u00b7  INVEST",74,13,GlassStyle.MUTED);
         allOff.setAlpha(opacity);
         allOff.extractRenderState(g,mx,my,dt);
@@ -1546,7 +1559,7 @@ public final class  ClickGuiScreen extends Screen {
     private void text(GuiGraphicsExtractor g,String value,int x,int y,int color){g.text(font,GlassStyle.label(value),x,y,GlassStyle.alpha(color,opacity),false);}
     @Override public boolean mouseScrolled(double x,double y,double horizontal,double vertical){
         if (openOptions!=null) {
-            if (insideOptions(x/UI_SCALE,y/UI_SCALE)) {
+            if (insideOptions(x/uiScale,y/uiScale)) {
                 optionsScroll=Math.clamp(optionsScroll-(int)(vertical*28),0,optionsMaxScroll);
                 layoutOptions();
             }
@@ -1555,7 +1568,7 @@ public final class  ClickGuiScreen extends Screen {
         scroll=Math.clamp(scroll-(int)(vertical*28),0,maxScroll);layout();return true;
     }
     private MouseButtonEvent logicalMouse(MouseButtonEvent event) {
-        return new MouseButtonEvent(event.x() / UI_SCALE, event.y() / UI_SCALE, event.buttonInfo());
+        return new MouseButtonEvent(event.x() / uiScale, event.y() / uiScale, event.buttonInfo());
     }
     private boolean categoryHeaderContains(Category c,double x,double y) {
         int top=c.y-scroll;
@@ -1564,8 +1577,9 @@ public final class  ClickGuiScreen extends Screen {
     private void toggleCategory(Category c) {
         c.collapsed=!c.collapsed;
         if(c.collapsed)expandedCategories.remove(c.title);else expandedCategories.add(c.title);
+        ClickGuiLayout.save();
     }
-    @Override public void mouseMoved(double x, double y) { super.mouseMoved(x / UI_SCALE, y / UI_SCALE); }
+    @Override public void mouseMoved(double x, double y) { super.mouseMoved(x / uiScale, y / uiScale); }
     @Override public boolean mouseClicked(MouseButtonEvent event,boolean twice){
         if (pendingKey != null) {
             try {
@@ -1620,7 +1634,7 @@ public final class  ClickGuiScreen extends Screen {
     }
     @Override public boolean mouseDragged(MouseButtonEvent event,double dx,double dy){
         MouseButtonEvent e = logicalMouse(event);
-        dx /= UI_SCALE; dy /= UI_SCALE;
+        dx /= uiScale; dy /= uiScale;
         if(draggingOptions){
             optionsX=Math.clamp((int)(e.x()-dragX),8,canvasWidth-optionsWidth-8);
             optionsY=Math.clamp((int)(e.y()-dragY),28,canvasHeight-optionsHeight-18);
@@ -1637,6 +1651,7 @@ public final class  ClickGuiScreen extends Screen {
     }
     @Override public boolean mouseReleased(MouseButtonEvent event){
         MouseButtonEvent e=logicalMouse(event);
+        if(e.button()==0&&dragging!=null&&categoryDragged)ClickGuiLayout.save();
         if(e.button()==0&&draggingOptions){draggingOptions=false;return true;}
         if(e.button()==0&&dragging!=null){
             Category c=dragging;

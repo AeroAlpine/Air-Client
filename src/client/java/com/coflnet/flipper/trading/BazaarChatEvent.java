@@ -3,7 +3,9 @@ package com.coflnet.flipper.trading;
 public class BazaarChatEvent {
     public enum Type {
         BUY_SETUP, SELL_SETUP, BUY_FILLED, SELL_FILLED, FLIPPED, CLAIMED_COINS, CLAIMED_ITEMS,
-        CANCELLED, EXPIRED, ORDER_LIMIT, INVENTORY_FULL, DAILY_BUY_LIMIT, DAILY_SELL_LIMIT, OTHER
+        CANCELLED, EXPIRED, ORDER_LIMIT, INVENTORY_FULL, DAILY_BUY_LIMIT, DAILY_SELL_LIMIT,
+        /** "[Bazaar] Placing orders is on cooldown for up to 1 minute!" */
+        COOLDOWN, OTHER
     }
 
     /** Which kind of order a cancel/expire line is about. */
@@ -40,6 +42,10 @@ public class BazaarChatEvent {
             if (lowerLine.contains("daily limit")) {
                 event.type = lowerLine.contains("create orders") ? Type.DAILY_BUY_LIMIT
                         : lowerLine.contains("sell") ? Type.DAILY_SELL_LIMIT : Type.DAILY_BUY_LIMIT;
+                return event;
+            }
+            if (lowerLine.contains("cooldown")) {
+                event.type = Type.COOLDOWN;
                 return event;
             }
             if (stripped.contains("Buy Order Setup!")) {

@@ -146,8 +146,8 @@ final class KeystrokesGameTest {
             var screen = client.gui.screen();
             var button = screen.children().stream().filter(Button.class::isInstance).map(Button.class::cast)
                     .filter(b -> b.getMessage().getString().equals(label)).findFirst().orElseThrow();
-            var event = pointer((button.getX() + button.getWidth() / 2.0) * ClickGuiScreen.UI_SCALE,
-                    (button.getY() + button.getHeight() / 2.0) * ClickGuiScreen.UI_SCALE);
+            var event = pointer((button.getX() + button.getWidth() / 2.0) * ClickGuiScreen.currentScale(),
+                    (button.getY() + button.getHeight() / 2.0) * ClickGuiScreen.currentScale());
             check(screen.mouseClicked(event, false), "Control did not handle click: " + label);
             screen.mouseReleased(event);
         });

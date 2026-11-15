@@ -113,7 +113,7 @@ final class ClickGuiOptionsGameTest {
                 MouseButtonEvent down=pointer(close.getX()-80,close.getY()+8);
                 check(screen.mouseClicked(down,false),"Window title rejected drag");
                 MouseButtonEvent moved=pointer(close.getX()-40,close.getY()+28);
-                screen.mouseDragged(moved,40*ClickGuiScreen.UI_SCALE,20*ClickGuiScreen.UI_SCALE);
+                screen.mouseDragged(moved,40*ClickGuiScreen.currentScale(),20*ClickGuiScreen.currentScale());
                 screen.mouseReleased(moved);
                 check(close.getX()==beforeX+40,"Settings window did not move with its header");
                 AbstractSliderButton size=screen.children().stream().filter(AbstractSliderButton.class::isInstance)
@@ -149,11 +149,11 @@ final class ClickGuiOptionsGameTest {
             context.runOnClient(client -> {
                 Screen screen=client.gui.screen();
                 Button close=button(screen,"Close Xray options");
-                check(close.getRight()*ClickGuiScreen.UI_SCALE<=screen.width,"Window left the viewport after resize");
-                screen.mouseScrolled((close.getX()-60)*ClickGuiScreen.UI_SCALE,(close.getY()+40)*ClickGuiScreen.UI_SCALE,0,-100);
+                check(close.getRight()*ClickGuiScreen.currentScale()<=screen.width,"Window left the viewport after resize");
+                screen.mouseScrolled((close.getX()-60)*ClickGuiScreen.currentScale(),(close.getY()+40)*ClickGuiScreen.currentScale(),0,-100);
                 var minerals=XrayFeature.Mineral.values();
                 Button last=button(screen,minerals[minerals.length-1].label);
-                check(last.getY()*ClickGuiScreen.UI_SCALE>=0 && last.getBottom()*ClickGuiScreen.UI_SCALE<=screen.height,
+                check(last.getY()*ClickGuiScreen.currentScale()>=0 && last.getBottom()*ClickGuiScreen.currentScale()<=screen.height,
                         "Last options row is unreachable on a small window");
             });
             context.takeScreenshot("clickgui-options-small-scrolled");
@@ -297,7 +297,7 @@ final class ClickGuiOptionsGameTest {
         screen.mouseReleased(event);
     }
     private static MouseButtonEvent pointer(double x,double y) {
-        return new MouseButtonEvent(x*ClickGuiScreen.UI_SCALE,y*ClickGuiScreen.UI_SCALE,new MouseButtonInfo(0,0));
+        return new MouseButtonEvent(x*ClickGuiScreen.currentScale(),y*ClickGuiScreen.currentScale(),new MouseButtonInfo(0,0));
     }
     private static void captureHud(ClientGameTestContext context) {
         var finished=context.computeOnClient(client -> {

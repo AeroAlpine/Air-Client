@@ -201,7 +201,7 @@ final class CustomCrosshairGameTest {
         screen.setFocused(widget); screen.keyPressed(new KeyEvent(340,0,0));
     }
     private static void click(Screen screen,AbstractWidget widget,double x) {
-        var event=new MouseButtonEvent(x*ClickGuiScreen.UI_SCALE,(widget.getY()+widget.getHeight()/2.0)*ClickGuiScreen.UI_SCALE,new MouseButtonInfo(0,0));
+        var event=new MouseButtonEvent(x*ClickGuiScreen.currentScale(),(widget.getY()+widget.getHeight()/2.0)*ClickGuiScreen.currentScale(),new MouseButtonInfo(0,0));
         check(screen.mouseClicked(event,false),"Pointer rejected "+widget.getMessage().getString()); screen.mouseReleased(event);
     }
     private static Pixels capture(ClientGameTestContext context,String name) {

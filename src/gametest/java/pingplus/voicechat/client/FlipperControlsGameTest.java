@@ -164,8 +164,8 @@ final class FlipperControlsGameTest {
                 .filter(w -> w.getMessage().getString().startsWith(name+": ")).findFirst().orElseThrow();
     }
     private static void click(Screen screen,Button button) {
-        var event=new MouseButtonEvent((button.getX()+button.getWidth()/2.0)*ClickGuiScreen.UI_SCALE,
-                (button.getY()+button.getHeight()/2.0)*ClickGuiScreen.UI_SCALE,new MouseButtonInfo(0,0));
+        var event=new MouseButtonEvent((button.getX()+button.getWidth()/2.0)*ClickGuiScreen.currentScale(),
+                (button.getY()+button.getHeight()/2.0)*ClickGuiScreen.currentScale(),new MouseButtonInfo(0,0));
         check(screen.mouseClicked(event,false),"Control rejected input: "+button.getMessage().getString());
         screen.mouseReleased(event);
     }

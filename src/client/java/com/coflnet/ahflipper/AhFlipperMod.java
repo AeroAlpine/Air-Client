@@ -329,16 +329,30 @@ public class AhFlipperMod {
         return blacklistKey;
     }
 
+    /**
+     * Toggle keys pressed while a menu is open (called from the screen mixins). In a menu they
+     * only turn a bot <b>off</b>: starting one by accident while typing or clicking in a menu
+     * is not wanted. Outside menus the keys toggle both ways as usual.
+     */
     public static boolean handleToggleKeys(net.minecraft.client.input.KeyEvent input) {
         if (toggleKey != null && toggleKey.matches(input)) {
-            toggle();
+            if (!running) {
+                return false;
+            }
+            stop();
             return true;
         }
         if (FlipperMod.toggleKey() != null && FlipperMod.toggleKey().matches(input)) {
+            if (!FlipperMod.isRunning()) {
+                return false;
+            }
             FlipperMod.toggle();
             return true;
         }
         if (LowballingMod.toggleKey() != null && LowballingMod.toggleKey().matches(input)) {
+            if (!LowballingMod.isRunning()) {
+                return false;
+            }
             LowballingMod.toggle();
             return true;
         }
