@@ -31,6 +31,21 @@ public final class PathfinderLogicTest {
         double boost2 = PlayerMovementStats.maxJumpHeight(0.62, 0.08);
         check(boost2 > 2.4 && boost2 < 2.6, "jump boost II ~2.5, got " + boost2);
         check(PlayerMovementStats.maxJumpHeight(0, 0.08) == 0, "no jump");
+        check(PlayerMovementStats.VANILLA.extraAirTicks() == 0, "vanilla jump costs no extra air time");
+        // look point along a zig-zag path: 3 blocks along the path, not the next block
+        java.util.List<baritone.api.utils.BetterBlockPos> zigzag = java.util.List.of(
+                new baritone.api.utils.BetterBlockPos(1, 64, 0), new baritone.api.utils.BetterBlockPos(1, 64, 1),
+                new baritone.api.utils.BetterBlockPos(2, 64, 1), new baritone.api.utils.BetterBlockPos(2, 64, 2),
+                new baritone.api.utils.BetterBlockPos(3, 64, 2));
+        net.minecraft.world.phys.Vec3 look = MovementStyle.pointAlongPath(zigzag, 0,
+                new net.minecraft.world.phys.Vec3(0.5, 64, 0.5), 3.0);
+        check(look != null && Math.abs(look.x - 2.5) < 1e-6 && Math.abs(look.z - 1.5) < 1e-6,
+                "look point 3 blocks along the path: " + look);
+        net.minecraft.world.phys.Vec3 end = MovementStyle.pointAlongPath(zigzag, 0,
+                new net.minecraft.world.phys.Vec3(0.5, 64, 0.5), 50.0);
+        check(end != null && Math.abs(end.x - 3.5) < 1e-6 && Math.abs(end.z - 2.5) < 1e-6, "past the end: last block");
+        double boosted = PlayerMovementStats.of(0.921, 0.08, 0.6, 0.1).extraAirTicks();
+        check(boosted >= 10 && boosted <= 16, "6 block Jump Boost jump hangs ~13 ticks longer: " + boosted);
         check(Math.abs(PlayerMovementStats.VANILLA.speedPercent() - 100) < 1e-9, "vanilla speed 100%");
     }
 
@@ -196,7 +211,7 @@ public final class PathfinderLogicTest {
         check(!TargetSwitch.shouldSwitch(10, 9, 10_000), "1 block closer: stay");
         check(TargetSwitch.shouldSwitch(20, 8, 10_000), "12 blocks closer: switch");
         check(!TargetSwitch.shouldSwitch(20, 8, 500), "not right after a switch");
-        check(!TargetSwitch.shouldSwitch(30, 25, 10_000), "5 of 30 blocks is less than 30 %");
+        check(!TargetSwitch.shouldSwitch(30, 25, 10_000), "5 of 30 blocks is less than 25 %");
         check(TargetSwitch.effectiveDistance(5, false) > TargetSwitch.effectiveDistance(10, true),
                 "a mob behind a wall counts as further away");
     }

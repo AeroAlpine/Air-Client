@@ -104,7 +104,7 @@ public final class  ClickGuiScreen extends Screen {
         int columns = Math.clamp((canvasWidth-16)/148,2,4);
         panelWidth = Math.min(140, (canvasWidth-24-(columns-1)*8)/columns);
         int startX = 16;
-        Category investment = category("INVESTMENT", "AH & Fire Sale investments");
+        Category investment = category("INVESTMENT", "AH, Bazaar & Fire Sale investments");
         toggle(investment,"Investment Tracker",()->AhFlipperMod.CONFIG.investmentGui,()->{
             boolean enable=!AhFlipperMod.CONFIG.investmentGui;
             AhFlipperMod.CONFIG.investmentGui=enable;
@@ -182,6 +182,41 @@ public final class  ClickGuiScreen extends Screen {
                 text(g,"Investment GUI",getX()+4,getY()+4,GlassStyle.MUTED);
             }
         },18);
+        add(investment,new Button(0,0,panelWidth-20,18,Component.literal("Bazaar Flips GUI"),b->
+            net.minecraft.client.Minecraft.getInstance().gui.setScreen(new com.coflnet.ahflipper.BazaarFlipScreen()),
+            supplier->supplier.get()) {
+            @Override protected void extractContents(GuiGraphicsExtractor g,int mx,int my,float dt) {
+                if(isHoveredOrFocused()) GlassButtonRenderer.control(g,getX(),getY(),width,height,GlassStyle.alpha(0xFF858585,opacity*.85f));
+                text(g,"Bazaar Flips GUI",getX()+4,getY()+4,GlassStyle.MUTED);
+            }
+        },18);
+        options(investment,"Bazaar Flips Settings",()-> {
+            com.coflnet.flipper.FlipperConfig fc=FlipperMod.CONFIG;
+            Runnable changed=()->{fc.save();com.coflnet.flipper.analysis.BazaarFlipTracker.requestRefresh();};
+            optionLabel(investment,"Same filters as the Bazaar Flipper");
+            add(investment,new CombatSlider(panelWidth-20,"Min margin %",0,20,.5,
+                    ()->fc.minMarginPercent,v->{fc.minMarginPercent=v;changed.run();}),26);
+            add(investment,new CombatSlider(panelWidth-20,"Max margin %",5,100,5,
+                    ()->fc.maxMarginPercent,v->{fc.maxMarginPercent=v;changed.run();}),26);
+            add(investment,new CombatSlider(panelWidth-20,"Min weekly volume",0,10000,50,
+                    ()->fc.minWeeklyVolume,v->{fc.minWeeklyVolume=Math.round(v);changed.run();}),26);
+            add(investment,new CombatSlider(panelWidth-20,"Min unit price (k)",0,10000,10,
+                    ()->fc.minUnitCoins/1000.0,v->{fc.minUnitCoins=v*1000.0;changed.run();}),26);
+            add(investment,new CombatSlider(panelWidth-20,"Min order (M)",0,100,1,
+                    ()->fc.minOrderCoins/1_000_000.0,v->{fc.minOrderCoins=v*1_000_000.0;changed.run();}),26);
+            add(investment,new CombatSlider(panelWidth-20,"Max per item (M)",0,1000,5,
+                    ()->fc.maxCoinsPerItem/1_000_000.0,v->{fc.maxCoinsPerItem=v*1_000_000.0;changed.run();}),26);
+            add(investment,new CombatSlider(panelWidth-20,"Min coins/hour (M)",0,100,.5,
+                    ()->fc.minCoinsPerHour/1_000_000.0,v->{fc.minCoinsPerHour=Math.round(v*1_000_000.0);changed.run();}),26);
+            add(investment,new CombatSlider(panelWidth-20,"Max price swing %",5,100,5,
+                    ()->fc.maxHistoricalDeviationPercent,v->{fc.maxHistoricalDeviationPercent=v;changed.run();}),26);
+            toggle(investment,"Need price history",()->fc.requireHistoricalPrice,()->{fc.requireHistoricalPrice=!fc.requireHistoricalPrice;changed.run();});
+            add(investment,new CombatSlider(panelWidth-20,"Rows",3,25,1,
+                    ()->fc.flipsTopCount,v->{fc.flipsTopCount=(int)Math.round(v);fc.save();
+                        com.coflnet.flipper.analysis.BazaarFlipTracker.resort();}),26);
+            add(investment,new CombatSlider(panelWidth-20,"Refresh (min)",1,30,1,
+                    ()->fc.flipsRefreshMinutes,v->{fc.flipsRefreshMinutes=(int)Math.round(v);fc.save();}),26);
+        });
         toggle(investment,"Fire Sale Skins",()->AhFlipperMod.CONFIG.fireSaleSkins,()->{
             boolean enable=!AhFlipperMod.CONFIG.fireSaleSkins;
             AhFlipperMod.CONFIG.fireSaleSkins=enable;
@@ -554,49 +589,6 @@ public final class  ClickGuiScreen extends Screen {
         options(automation,"Swap interval",()-> {
             add(automation,new SpeedSlider(panelWidth-20),26);
         });
-        Category combat = category("COMBAT", "Follow and fight your targets");
-        {
-            var combatKey = pingplus.voicechat.client.FollowFeature.toggleKey();
-            String keyName = combatKey == null || combatKey.isUnbound() ? "not set (KEYS)"
-                    : combatKey.getTranslatedKeyMessage().getString();
-            toggle(combat,"Combat",()->PlayerSettings.combatEnabled,pingplus.voicechat.client.FollowFeature::toggle);
-            options(combat,"Combat options",()-> {
-                optionLabel(combat,"Hotkey: "+keyName);
-                toggle(combat,"Attack target",()->PlayerSettings.followAttack,
-                    ()->PlayerSettings.followAttack=!PlayerSettings.followAttack);
-                add(combat,new CombatSlider(panelWidth-20,"Follow distance",1,16,1,
-                    ()->PlayerSettings.followDistance,v->PlayerSettings.followDistance=(int)Math.round(v)),26);
-                add(combat,new CombatSlider(panelWidth-20,"Rotation speed",30,1080,10,
-                    ()->PlayerSettings.combatRotationSpeed,v->PlayerSettings.combatRotationSpeed=(float)v),26);
-                add(combat,new CombatSlider(panelWidth-20,"CPS min",1,20,.5,
-                    ()->PlayerSettings.followCpsMin,v->{PlayerSettings.followCpsMin=v;
-                        if(PlayerSettings.followCpsMax<v)PlayerSettings.followCpsMax=v;}),26);
-                add(combat,new CombatSlider(panelWidth-20,"CPS max",1,20,.5,
-                    ()->PlayerSettings.followCpsMax,v->{PlayerSettings.followCpsMax=v;
-                        if(PlayerSettings.followCpsMin>v)PlayerSettings.followCpsMin=v;}),26);
-                toggle(combat,"Look at nearby players",()->PlayerSettings.followLookAtNearbyPlayers,
-                    ()->PlayerSettings.followLookAtNearbyPlayers=!PlayerSettings.followLookAtNearbyPlayers);
-            });
-            itemListBox(combat,"Add target","Combat",pingplus.voicechat.client.FollowFeature::addTarget,
-                    PlayerSettings::save,"Target added:","is already a target",
-                    "Player name, mob name or entity type - Enter adds it");
-            List<String> targets = pingplus.voicechat.client.FollowFeature.targets();
-            optionLabel(combat,targets.isEmpty() ? "Targets: none - Enter adds" : "Targets: "+targets.size()+" - x removes");
-            for (String target : targets) {
-                itemListRow(combat,target,"Combat",pingplus.voicechat.client.FollowFeature::removeTarget,
-                        PlayerSettings::save,"Target removed:","was not a target","Click to remove");
-            }
-            toggle(combat,"KillAura",()->PlayerSettings.killAura,()->{
-                PlayerSettings.killAura=!PlayerSettings.killAura;
-                if (!PlayerSettings.killAura) pingplus.voicechat.client.KillAuraFeature.clear();
-            });
-            options(combat,"KillAura options",()-> {
-                toggle(combat,"Target players",()->PlayerSettings.killAuraPlayers,()->PlayerSettings.killAuraPlayers=!PlayerSettings.killAuraPlayers);
-                toggle(combat,"Target mobs",()->PlayerSettings.killAuraMobs,()->PlayerSettings.killAuraMobs=!PlayerSettings.killAuraMobs);
-                add(combat,new CombatSlider(panelWidth-20,"Range",1,4,.1,()->PlayerSettings.killAuraRange,v->PlayerSettings.killAuraRange=(float)v),26);
-                add(combat,new CombatSlider(panelWidth-20,"Turn speed",45,540,15,()->PlayerSettings.killAuraTurnSpeed,v->PlayerSettings.killAuraTurnSpeed=(float)v),26);
-            });
-        }
         Category pathfinder = category("PATHFINDER", "Baritone tuning and fault learning");
         {
             com.coflnet.pathing.PathfinderConfig pf = com.coflnet.pathing.PathfinderConfig.get();
@@ -604,6 +596,8 @@ public final class  ClickGuiScreen extends Screen {
             toggle(pathfinder,"Allow jumps",()->pf.allowJumps,()->{pf.allowJumps=!pf.allowJumps;pf.save();});
             toggle(pathfinder,"Allow parkour",()->pf.allowParkour,()->{pf.allowParkour=!pf.allowParkour;pf.save();});
             toggle(pathfinder,"Allow sprint",()->pf.allowSprint,()->{pf.allowSprint=!pf.allowSprint;pf.save();});
+            add(pathfinder,new CombatSlider(panelWidth-20,"Calm movement %",0,100,5,
+                    ()->pf.movementCalmness,v->{pf.movementCalmness=v;pf.save();}),26);
             options(pathfinder,"Tuning",()-> {
                 add(pathfinder,new CombatSlider(panelWidth-20,"Max turn (deg/tick)",10,180,5,
                         ()->pf.maxTurnPerTick,v->{pf.maxTurnPerTick=v;pf.save();}),26);
@@ -622,6 +616,7 @@ public final class  ClickGuiScreen extends Screen {
             });
             toggle(pathfinder,"Avoid standing NPCs",()->pf.avoidStandingEntities,()->{pf.avoidStandingEntities=!pf.avoidStandingEntities;pf.save();});
             toggle(pathfinder,"Setback guard",()->pf.setbackGuard,()->{pf.setbackGuard=!pf.setbackGuard;pf.save();});
+            toggle(pathfinder,"Show path + target",()->pf.showPathOverlay,()->{pf.showPathOverlay=!pf.showPathOverlay;pf.save();});
             toggle(pathfinder,"Path recorder",()->pf.recordPaths,()->{pf.recordPaths=!pf.recordPaths;pf.save();});
             options(pathfinder,"Path recorder",()-> {
                 optionLabel(pathfinder,"Logs every run: plan vs. reality");
@@ -943,6 +938,52 @@ public final class  ClickGuiScreen extends Screen {
                 LowballingMod.CONFIG.save();
             }),26);
         });
+        {
+            // Combat lives in the SkyBlock tab: it is mostly used for SkyBlock mobs.
+            var combatKey = pingplus.voicechat.client.FollowFeature.toggleKey();
+            String keyName = combatKey == null || combatKey.isUnbound() ? "not set (KEYS)"
+                    : combatKey.getTranslatedKeyMessage().getString();
+            toggle(skyblock,"Combat",()->PlayerSettings.combatEnabled,pingplus.voicechat.client.FollowFeature::toggle);
+            options(skyblock,"Combat options",()-> {
+                optionLabel(skyblock,"Hotkey: "+keyName);
+                toggle(skyblock,"Attack target",()->PlayerSettings.followAttack,
+                    ()->PlayerSettings.followAttack=!PlayerSettings.followAttack);
+                toggle(skyblock,"One-hit mode",()->PlayerSettings.combatOneHit,
+                    ()->PlayerSettings.combatOneHit=!PlayerSettings.combatOneHit);
+                optionLabel(skyblock,"One-hit: 1 click, then next target");
+                add(skyblock,new CombatSlider(panelWidth-20,"Follow distance",1,16,1,
+                    ()->PlayerSettings.followDistance,v->PlayerSettings.followDistance=(int)Math.round(v)),26);
+                add(skyblock,new CombatSlider(panelWidth-20,"Rotation speed",30,1080,10,
+                    ()->PlayerSettings.combatRotationSpeed,v->PlayerSettings.combatRotationSpeed=(float)v),26);
+                add(skyblock,new CombatSlider(panelWidth-20,"CPS min",1,20,.5,
+                    ()->PlayerSettings.followCpsMin,v->{PlayerSettings.followCpsMin=v;
+                        if(PlayerSettings.followCpsMax<v)PlayerSettings.followCpsMax=v;}),26);
+                add(skyblock,new CombatSlider(panelWidth-20,"CPS max",1,20,.5,
+                    ()->PlayerSettings.followCpsMax,v->{PlayerSettings.followCpsMax=v;
+                        if(PlayerSettings.followCpsMin>v)PlayerSettings.followCpsMin=v;}),26);
+                toggle(skyblock,"Look at nearby players",()->PlayerSettings.followLookAtNearbyPlayers,
+                    ()->PlayerSettings.followLookAtNearbyPlayers=!PlayerSettings.followLookAtNearbyPlayers);
+                itemListBox(skyblock,"Add target","Combat",pingplus.voicechat.client.FollowFeature::addTarget,
+                        PlayerSettings::save,"Target added:","is already a target",
+                        "Player name, mob name or entity type - Enter adds it");
+                List<String> targets = pingplus.voicechat.client.FollowFeature.targets();
+                optionLabel(skyblock,targets.isEmpty() ? "Targets: none - Enter adds" : "Targets: "+targets.size()+" - x removes");
+                for (String target : targets) {
+                    itemListRow(skyblock,target,"Combat",pingplus.voicechat.client.FollowFeature::removeTarget,
+                            PlayerSettings::save,"Target removed:","was not a target","Click to remove");
+                }
+            });
+            toggle(skyblock,"KillAura",()->PlayerSettings.killAura,()->{
+                PlayerSettings.killAura=!PlayerSettings.killAura;
+                if (!PlayerSettings.killAura) pingplus.voicechat.client.KillAuraFeature.clear();
+            });
+            options(skyblock,"KillAura options",()-> {
+                toggle(skyblock,"Target players",()->PlayerSettings.killAuraPlayers,()->PlayerSettings.killAuraPlayers=!PlayerSettings.killAuraPlayers);
+                toggle(skyblock,"Target mobs",()->PlayerSettings.killAuraMobs,()->PlayerSettings.killAuraMobs=!PlayerSettings.killAuraMobs);
+                add(skyblock,new CombatSlider(panelWidth-20,"Range",1,4,.1,()->PlayerSettings.killAuraRange,v->PlayerSettings.killAuraRange=(float)v),26);
+                add(skyblock,new CombatSlider(panelWidth-20,"Turn speed",45,540,15,()->PlayerSettings.killAuraTurnSpeed,v->PlayerSettings.killAuraTurnSpeed=(float)v),26);
+            });
+        }
         toggle(skyblock,"Auto Experiment Table",com.coflnet.experiments.AutoExperimentTable::isEnabled,
                 com.coflnet.experiments.AutoExperimentTable::toggle);
         options(skyblock,"Experiment Table Settings",()-> {

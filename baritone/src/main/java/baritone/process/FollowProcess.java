@@ -56,7 +56,7 @@ public final class FollowProcess extends BaritoneProcessHelper implements IFollo
      */
     private final Map<Entity, BlockPos> anchors = new HashMap<>();
     private static final double REANCHOR_DIST_SQ = 4.0;
-    private static final long REANCHOR_MIN_MS = 400L;
+    private static final long REANCHOR_MIN_MS = 250L;
     private long lastReanchorAt;
 
     public FollowProcess(Baritone baritone) {

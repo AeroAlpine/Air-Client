@@ -89,6 +89,8 @@ public final class PlayerSettings {
     /** Follow attack speed (clicks per second, random between min and max). */
     public static double followCpsMin = 8;
     public static double followCpsMax = 12;
+    /** Combat one-hit mode: one click per target, then straight on to the next (already picked) one. */
+    public static boolean combatOneHit = false;
 
     static {
         load();

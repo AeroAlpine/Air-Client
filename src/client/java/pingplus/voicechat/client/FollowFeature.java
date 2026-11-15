@@ -52,6 +52,27 @@ public final class FollowFeature {
     private static int visibleTicks;
     private static boolean closeIn;
     private static final int HIDDEN_SWITCH_TICKS = 10;
+    /** Ticks between searches while no target is around. */
+    private static final int SEARCH_RETRY_TICKS = 4;
+    /** Ticks between "is another mob clearly closer?" checks. */
+    private static final int SWITCH_CHECK_TICKS = 5;
+    /** After the last target is gone: how long the bot keeps looking around for the next one. */
+    private static final long IDLE_LOOK_MS = 4_000L;
+    private static net.minecraft.world.phys.Vec3 lastLostPos;
+    private static long lastLostAt;
+    private static long nextIdleLookAt;
+    private static boolean idleLooking;
+    /** Filtered look point while walking, and whether the camera is in the middle of a turn. */
+    private static net.minecraft.world.phys.Vec3 smoothLook;
+    private static boolean turning;
+    /** The next targets, picked ahead: nearest to the current target, then nearest to that one. */
+    private static final int QUEUE_SIZE = 2;
+    private static final int QUEUE_REFRESH_TICKS = 10;
+    private static final List<Entity> queue = new java.util.ArrayList<>();
+    private static int queueCooldown;
+    /** One-hit mode: mobs already clicked once, ignored until the time stored here. */
+    private static final java.util.Map<UUID, Long> HIT_ONCE = new java.util.HashMap<>();
+    private static final long HIT_ONCE_IGNORE_MS = 6_000L;
 
     private FollowFeature() {
     }
@@ -121,36 +142,75 @@ public final class FollowFeature {
             release();
             return;
         }
+        long nowMs = System.currentTimeMillis();
+        HIT_ONCE.values().removeIf(until -> until <= nowMs);
+        if (PlayerSettings.combatOneHit && followed != null && !(followed instanceof Player)
+                && KillAuraFeature.lastAttackId() == followed.getId()
+                && KillAuraFeature.lastAttackAt() >= lastSwitchAt) {
+            // One-hit mode: clicked once, done. No waiting for damage or death: straight on.
+            HIT_ONCE.put(followed.getUUID(), nowMs + HIT_ONCE_IGNORE_MS);
+        }
+        Entity lost = null;
         if (!valid(followed, player)) {
+            lost = followed;
             followed = null;
-            if (searchCooldown-- > 0) {
-                stopBaritone(); // dead / gone target: never keep walking after it
+            Entity next = pollQueue(player);
+            if (next != null) {
+                // the next target was picked ahead of time: no search, no pause
+                followed = next;
+                searchCooldown = 0;
+                idleLooking = false;
+                lastSwitchAt = nowMs;
+                switchCheckCooldown = SWITCH_CHECK_TICKS;
+                queueCooldown = 0;
+            }
+        }
+        if (followed == null) {
+            // A target that just died / vanished: look for the next one right away. Only after
+            // a search found nothing, retry every few ticks. (Before: a fixed 10 tick wait plus a
+            // full Baritone stop after every kill, so the bot stood still for half a second.)
+            if (lost == null && searchCooldown-- > 0) {
+                idle(client, player);
                 return;
             }
-            searchCooldown = 10;
             followed = findTarget(client, player, names);
             if (followed == null) {
-                stopBaritone();
+                searchCooldown = SEARCH_RETRY_TICKS;
+                if (lost != null) {
+                    lastLostPos = lost.position();
+                    lastLostAt = System.currentTimeMillis();
+                }
+                idle(client, player);
                 return;
             }
+            searchCooldown = 0;
+            idleLooking = false;
             lastSwitchAt = System.currentTimeMillis();
+            switchCheckCooldown = SWITCH_CHECK_TICKS;
+            queueCooldown = 0;
         } else if (!(followed instanceof Player) && --switchCheckCooldown <= 0) {
             // mobs: move on to another one that is clearly closer (with hysteresis)
-            switchCheckCooldown = 20;
+            switchCheckCooldown = SWITCH_CHECK_TICKS;
             Entity closer = findTarget(client, player, names);
             long now = System.currentTimeMillis();
             if (closer != null && closer != followed && TargetSwitch.shouldSwitch(
                     effectiveDistance(player, followed), effectiveDistance(player, closer), now - lastSwitchAt)) {
                 followed = closer;
                 lastSwitchAt = now;
+                queueCooldown = 0;
             }
+        }
+        if (--queueCooldown <= 0) {
+            queueCooldown = QUEUE_REFRESH_TICKS;
+            rebuildQueue(client, player, names, followed);
         }
         IBaritone baritone = primary();
         if (baritone == null) {
             return;
         }
         Entity current = followed;
-        LivingEntity attack = PlayerSettings.followAttack ? attackable(current) : null;
+        // one-hit mode attacks by definition, also with "Attack target" off
+        LivingEntity attack = PlayerSettings.followAttack || PlayerSettings.combatOneHit ? attackable(current) : null;
         // Leaves or a wall between us and the target: get closer until it is visible. Only after
         // it stayed hidden / visible for half a second and only on the ground: switching on every
         // flicker of the line of sight (each jump) re-planned the path constantly.
@@ -193,12 +253,24 @@ public final class FollowFeature {
             hasLook = false;
             return;
         }
+        if (System.currentTimeMillis() - lastSwitchAt < 450) {
+            // Just picked a new target: turn towards it while the new path is planned, like a
+            // player who spots the next mob, instead of following the old path's direction.
+            smoothLook = null;
+            setLook(player, new net.minecraft.world.phys.Vec3(target.getX(),
+                    target instanceof LivingEntity living ? living.getEyeY() : target.getY(), target.getZ()));
+            return;
+        }
         net.minecraft.world.phys.Vec3 ahead = baritone.getPathingBehavior().isPathing()
                 ? pathAhead(baritone, player) : null;
         if (ahead != null) {
-            setLook(player, ahead);
+            // Low-pass the look point: the camera follows the course of the path, not every
+            // block of it (that was the left-right-left twitching on diagonal paths).
+            smoothLook = smoothLook == null ? ahead : smoothLook.lerp(ahead, com.coflnet.pathing.MovementStyle.lookBlend());
+            setLook(player, smoothLook);
             return;
         }
+        smoothLook = null;
         if (!attacking && PlayerSettings.followLookAtNearbyPlayers && lookAtNearbyPlayer(client, player, target)) {
             return;
         }
@@ -219,7 +291,10 @@ public final class FollowFeature {
         hasLook = true;
     }
 
-    /** First path point at least ~1.5 blocks away, at eye height (natural, level look). */
+    /**
+     * A point a few blocks ahead along the path (how far: "Calm movement"), at eye height
+     * (natural, level look).
+     */
     private static net.minecraft.world.phys.Vec3 pathAhead(IBaritone baritone, LocalPlayer player) {
         try {
             baritone.api.pathing.path.IPathExecutor executor = baritone.getPathingBehavior().getCurrent();
@@ -227,15 +302,12 @@ public final class FollowFeature {
                 return null;
             }
             List<baritone.api.utils.BetterBlockPos> positions = executor.getPath().positions();
-            for (int i = Math.max(0, executor.getPosition() + 1); i < positions.size(); i++) {
-                baritone.api.utils.BetterBlockPos pos = positions.get(i);
-                double dx = pos.getX() + 0.5 - player.getX();
-                double dz = pos.getZ() + 0.5 - player.getZ();
-                if (dx * dx + dz * dz > 2.25) {
-                    return new net.minecraft.world.phys.Vec3(pos.getX() + 0.5,
-                            Math.max(player.getEyeY() - 0.4, pos.getY() + 1.4), pos.getZ() + 0.5);
-                }
+            net.minecraft.world.phys.Vec3 point = com.coflnet.pathing.MovementStyle.pointAlongPath(positions,
+                    executor.getPosition() + 1, player.position(), com.coflnet.pathing.MovementStyle.lookAheadBlocks());
+            if (point == null || Math.hypot(point.x - player.getX(), point.z - player.getZ()) < 1.0) {
+                return null;
             }
+            return new net.minecraft.world.phys.Vec3(point.x, Math.max(player.getEyeY() - 0.4, point.y + 1.4), point.z);
         } catch (RuntimeException ignored) {
         }
         return null;
@@ -247,12 +319,27 @@ public final class FollowFeature {
         double dt = lastFrameNanos == 0 ? 0 : Math.min(0.1, (now - lastFrameNanos) / 1e9);
         lastFrameNanos = now;
         LocalPlayer player = client.player;
-        if (!active || !hasLook || player == null || client.gui.screen() != null) {
+        if ((!active && !idleLooking) || !hasLook || player == null || client.gui.screen() != null) {
             return;
         }
-        float speed = Math.clamp(PlayerSettings.combatRotationSpeed, 30.0f, 1080.0f);
-        player.setYRot(AimSmoothing.step(player.getYRot(), lookYaw, speed, dt));
-        player.setXRot(Math.clamp(AimSmoothing.step(player.getXRot(), lookPitch, speed, dt), -90.0f, 90.0f));
+        float speed = (float) (Math.clamp(PlayerSettings.combatRotationSpeed, 30.0f, 1080.0f)
+                * com.coflnet.pathing.MovementStyle.turnSpeedFactor());
+        double rate = com.coflnet.pathing.MovementStyle.easeRate();
+        float yawDelta = Math.abs(net.minecraft.util.Mth.wrapDegrees(lookYaw - player.getYRot()));
+        float pitchDelta = Math.abs(lookPitch - player.getXRot());
+        // Dead zone with hysteresis: a small difference does not start a turn (no constant
+        // micro corrections), but a started turn is finished properly.
+        double deadzone = com.coflnet.pathing.MovementStyle.deadzoneDegrees();
+        if (!turning && Math.max(yawDelta, pitchDelta) > deadzone) {
+            turning = true;
+        } else if (turning && Math.max(yawDelta, pitchDelta) < 0.6f) {
+            turning = false;
+        }
+        if (!turning) {
+            return;
+        }
+        player.setYRot(AimSmoothing.step(player.getYRot(), lookYaw, speed, dt, rate));
+        player.setXRot(Math.clamp(AimSmoothing.step(player.getXRot(), lookPitch, speed, dt, rate), -90.0f, 90.0f));
         player.setYHeadRot(player.getYRot());
     }
 
@@ -285,7 +372,8 @@ public final class FollowFeature {
                 continue;
             }
             Entity target = SkyblockTargets.resolve(client.level, entity);
-            if (target == null || target == player || SkyblockTargets.isGone(client.level, target)) {
+            if (target == null || target == player || SkyblockTargets.isGone(client.level, target)
+                    || hitOnce(target)) {
                 continue;
             }
             double distance = player.distanceToSqr(target);
@@ -317,8 +405,8 @@ public final class FollowFeature {
         if (entity instanceof Player) {
             return entity.isAlive() && !entity.isRemoved() && entity.level() == player.level();
         }
-        // mobs: also gone when dying or their nametag shows 0 health
-        return !SkyblockTargets.isGone(player.level(), entity);
+        // mobs: also gone when dying or their nametag shows 0 health, or (one-hit) already clicked
+        return !SkyblockTargets.isGone(player.level(), entity) && !hitOnce(entity);
     }
 
     /** The lowballer and the mob pathfinder steer Baritone themselves. */
@@ -385,11 +473,102 @@ public final class FollowFeature {
         hasLook = false;
         KillAuraFeature.setForcedTarget(null);
         EntityObstacles.setTarget(null);
+        EntityObstacles.setQueue(null);
+    }
+
+    /**
+     * No target in range. Baritone stops, but for a few seconds after the last target died the
+     * camera keeps glancing around (a few calm turns left / right) as if looking for the next
+     * mob, instead of freezing on the spot.
+     */
+    private static void idle(Minecraft client, LocalPlayer player) {
+        stopBaritone();
+        long now = System.currentTimeMillis();
+        if (lastLostPos == null || now - lastLostAt > IDLE_LOOK_MS || client.gui.screen() != null) {
+            idleLooking = false;
+            hasLook = false;
+            return;
+        }
+        if (!idleLooking || now >= nextIdleLookAt) {
+            ThreadLocalRandom random = ThreadLocalRandom.current();
+            double glance = com.coflnet.pathing.MovementStyle.idleGlanceDegrees();
+            lookYaw = player.getYRot() + (float) random.nextDouble(-glance, glance);
+            lookPitch = (float) random.nextDouble(-4.0, 14.0);
+            nextIdleLookAt = now + random.nextLong(com.coflnet.pathing.MovementStyle.idleGlanceMinMs(),
+                    com.coflnet.pathing.MovementStyle.idleGlanceMaxMs());
+            idleLooking = true;
+        }
+        hasLook = true;
+    }
+
+    private static boolean hitOnce(Entity entity) {
+        Long until = HIT_ONCE.get(entity.getUUID());
+        return until != null && until > System.currentTimeMillis();
+    }
+
+    /** First queued target that is still a valid target, or null. */
+    private static Entity pollQueue(LocalPlayer player) {
+        while (!queue.isEmpty()) {
+            Entity next = queue.remove(0);
+            if (valid(next, player)) {
+                EntityObstacles.setQueue(queue);
+                return next;
+            }
+        }
+        EntityObstacles.setQueue(queue);
+        return null;
+    }
+
+    /**
+     * Picks the next {@value #QUEUE_SIZE} targets ahead: the mob nearest to the current target
+     * (where we will be standing when it is done), then the mob nearest to that one. When the
+     * current target is done the bot walks on at once instead of searching first.
+     */
+    private static void rebuildQueue(Minecraft client, LocalPlayer player, List<String> names, Entity current) {
+        queue.clear();
+        if (current == null || current instanceof Player) {
+            EntityObstacles.setQueue(queue);
+            return;
+        }
+        List<String> wanted = names.stream().map(n -> n.toLowerCase(Locale.ROOT)).toList();
+        List<Entity> pool = new java.util.ArrayList<>();
+        for (Entity entity : client.level.entitiesForRendering()) {
+            if (entity == player || !entity.isAlive() || entity.isRemoved()
+                    || wanted.stream().noneMatch(w -> nameMatches(entity, w))) {
+                continue;
+            }
+            Entity mob = SkyblockTargets.resolve(client.level, entity);
+            if (mob == null || mob == player || mob == current || mob instanceof Player || pool.contains(mob)
+                    || player.distanceToSqr(mob) >= MAX_DISTANCE * MAX_DISTANCE || !valid(mob, player)) {
+                continue;
+            }
+            pool.add(mob);
+        }
+        net.minecraft.world.phys.Vec3 from = current.position();
+        while (queue.size() < QUEUE_SIZE && !pool.isEmpty()) {
+            Entity best = null;
+            double bestDistance = Double.MAX_VALUE;
+            for (Entity candidate : pool) {
+                double distance = candidate.position().distanceToSqr(from);
+                if (distance < bestDistance) {
+                    bestDistance = distance;
+                    best = candidate;
+                }
+            }
+            queue.add(best);
+            pool.remove(best);
+            from = best.position();
+        }
+        EntityObstacles.setQueue(queue);
     }
 
     private static void release() {
+        queue.clear();
+        EntityObstacles.setQueue(null);
         stopBaritone();
         followed = null;
+        idleLooking = false;
+        lastLostPos = null;
         searchCooldown = 0;
         idleLookTargetId = null;
         lastFrameNanos = 0;

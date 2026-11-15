@@ -47,6 +47,24 @@ public final class EntityObstacles {
     /** The bot's own target is never an obstacle. Call every tick with the current target (or null). */
     public static void setTarget(Entity target) {
         ignoredId = target == null ? Integer.MIN_VALUE : target.getId();
+        currentTarget = target;
+    }
+
+    private static volatile Entity currentTarget;
+    private static volatile List<Entity> queuedTargets = List.of();
+
+    /** The targets a bot already picked for after the current one (drawn faintly). */
+    public static void setQueue(List<Entity> queue) {
+        queuedTargets = queue == null ? List.of() : List.copyOf(queue);
+    }
+
+    public static List<Entity> queue() {
+        return queuedTargets;
+    }
+
+    /** The entity the active bot is going for, or null (drawn by {@link PathOverlayRenderer}). */
+    public static Entity target() {
+        return currentTarget;
     }
 
     static void tick(Minecraft client, long now) {

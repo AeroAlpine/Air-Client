@@ -70,6 +70,10 @@ public class FlipperConfig {
     public boolean bazaarPanelEdges = false;
     public int bazaarPanelRows = 5;
     public boolean bazaarPanelFooter = true;
+    /** Bazaar flips screen: rows shown, rescan interval and sort order (CPH, MARGIN, PROFIT, SCORE). */
+    public int flipsTopCount = 10;
+    public int flipsRefreshMinutes = 3;
+    public String flipsSort = "CPH";
     public int configVersion = 0;
 
     private static final Gson GSON = new GsonBuilder().setPrettyPrinting().create();

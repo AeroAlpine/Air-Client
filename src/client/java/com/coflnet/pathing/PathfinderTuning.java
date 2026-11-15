@@ -52,10 +52,17 @@ public final class PathfinderTuning {
         // islands would share one cache and plan through blocks of another island.
         // Plan with the loaded chunks only.
         s.chunkCaching.value = false;
+        // Path and target are drawn by PathOverlayRenderer (on the floor, following the target
+        // smoothly); Baritone's goal box lagged behind the target and its path cut into the ground.
+        s.renderPath.value = false;
+        s.renderGoal.value = false;
+        s.renderGoalAnimated.value = false;
 
         boolean jumps = config.allowJumps && !forbidJumps;
         if (jumps) {
-            s.jumpPenalty.value = config.jumpPenalty;
+            // A jump costs what it really takes: with Jump Boost the player hangs in the air for
+            // many more ticks, so stairs, slabs and walking around win over hopping on every block.
+            s.jumpPenalty.value = config.jumpPenalty + current.extraAirTicks();
             s.allowParkour.value = s.allowParkour.value && config.allowParkour;
             s.allowParkourAscend.value = s.allowParkourAscend.value && config.allowParkour;
             if (config.setbackGuard && SetbackGuard.active()) {

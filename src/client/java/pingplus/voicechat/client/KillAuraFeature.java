@@ -57,6 +57,18 @@ public final class KillAuraFeature {
         forcedTarget = filter;
     }
 
+    /** Entity id and time of the last attack sent (Combat's one-hit mode moves on after it). */
+    private static volatile int lastAttackId = Integer.MIN_VALUE;
+    private static volatile long lastAttackAt;
+
+    public static int lastAttackId() {
+        return lastAttackId;
+    }
+
+    public static long lastAttackAt() {
+        return lastAttackAt;
+    }
+
     /** True while KillAura has an entity it aims at (Follow then leaves the camera alone). */
     public static boolean hasTarget() {
         return target != null;
@@ -183,6 +195,8 @@ public final class KillAuraFeature {
         client.gameMode.attack(client.player, target);
         // Play the normal main-hand swing as well; the attack request and swing are separate calls.
         client.player.swing(InteractionHand.MAIN_HAND);
+        lastAttackId = target.getId();
+        lastAttackAt = System.currentTimeMillis();
         extraCooldownTicks = ThreadLocalRandom.current().nextInt(1, 3);
         if (cpsMode) {
             double cps = forcedCpsMin + ThreadLocalRandom.current().nextDouble()

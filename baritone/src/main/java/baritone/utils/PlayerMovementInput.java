@@ -55,7 +55,7 @@ public class PlayerMovementInput extends ClientInput {
             leftImpulse--;
         }
 
-        boolean sneaking = handler.isInputForcedDown(Input.SNEAK);
+        boolean sneaking = handler.isInputForcedDown(Input.SNEAK) && !sneakInAir();
         if (sneaking) {
             leftImpulse *= 0.3D;
             forwardImpulse *= 0.3D;
@@ -65,5 +65,18 @@ public class PlayerMovementInput extends ClientInput {
         boolean sprinting = handler.isInputForcedDown(Input.SPRINT);
 
         this.keyPresses = new net.minecraft.world.entity.player.Input(up, down, left, right, jumping, sneaking, sprinting);
+    }
+
+    /**
+     * Air Client: never sneak while falling or jumping (except on ladders / in water, where
+     * sneaking holds the player). Sneak in mid-air was behind 88 of 91 server setbacks in the
+     * path recorder logs: the player was pulled back up a block again and again before landing.
+     * Placing blocks (the only real use of a mid-air sneak) is off for every bot.
+     */
+    private static boolean sneakInAir() {
+        net.minecraft.client.player.LocalPlayer player = net.minecraft.client.Minecraft.getInstance().player;
+        return player != null && !player.onGround() && !player.onClimbable()
+                && !player.isInWater() && !player.isInLava()
+                && !baritone.Baritone.settings().allowPlace.value;
     }
 }

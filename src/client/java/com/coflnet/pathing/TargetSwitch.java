@@ -7,11 +7,11 @@ package com.coflnet.pathing;
  */
 public final class TargetSwitch {
     /** The new one must be at least this many blocks closer ... */
-    static final double MIN_GAIN_BLOCKS = 4.0;
+    static final double MIN_GAIN_BLOCKS = 3.0;
     /** ... and at least this share closer. */
-    static final double MIN_GAIN_SHARE = 0.3;
+    static final double MIN_GAIN_SHARE = 0.25;
     /** Stay with a target at least this long after switching to it. */
-    public static final long HOLD_MS = 2_000L;
+    public static final long HOLD_MS = 1_200L;
     /** Rough walking detour for a target that can not be seen (behind a wall). */
     public static final double HIDDEN_EXTRA = 8.0;
 
