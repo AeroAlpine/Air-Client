@@ -87,6 +87,18 @@ public class Trader {
     private volatile String lastTrouble = "";
     /** A sell offer was started but Hypixel did not confirm one since, 0 = none. */
     private volatile long sellPendingSince;
+    /** Hypixel: "Placing orders is on cooldown for up to 1 minute!" - no orders until then. */
+    private volatile long orderCooldownUntil;
+    private volatile long orderCooldownAt;
+    /**
+     * Prices of our own open sell offers per item (key: {@link #sellKey}), from the last order
+     * scan plus the offers placed since. If the best offer is one of these, a new offer for the
+     * same item takes the same price instead of undercutting ourselves, and offers that are all
+     * on the best price are left alone instead of being merged.
+     */
+    private final Map<String, List<Double>> ownSellPrices = new java.util.concurrent.ConcurrentHashMap<>();
+    /** Learned from the inventory: true = one item per slot (Summoning Eye ...), false = stacks. */
+    private final Map<String, Boolean> singleStack = new java.util.concurrent.ConcurrentHashMap<>();
     private Thread supervisor;
     private final List<ScreenUtil.GuiOrder> lastScannedBuyOrders = new ArrayList<>();
     private final List<ScreenUtil.GuiOrder> lastScannedSellOffers = new ArrayList<>();
@@ -190,8 +202,9 @@ public class Trader {
             ScreenUtil.sleep(5_000);
             if (stopRequested || state != State.RUNNING) return;
             long nowMs = System.currentTimeMillis();
-            if (paused || isAhPriority()) {
-                // Waiting for the AH is no lack of progress: the minute starts again afterwards.
+            if (paused || isAhPriority() || nowMs < orderCooldownUntil) {
+                // Waiting for the AH (or Hypixel's order cooldown) is no lack of progress:
+                // the minute starts again afterwards.
                 if (troubleSince > 0) troubleSince = nowMs;
                 if (sellPendingSince > 0) sellPendingSince = nowMs;
             } else if (sellPendingSince > 0 && nowMs - sellPendingSince > STUCK_STOP_MS) {
@@ -430,6 +443,11 @@ public class Trader {
             log("Buy Order unterbrochen (AH hat Vorrang): " + plan.displayName);
             return false;
         }
+        if (orderCooldownActive()) {
+            // Hypixel's order cooldown, not the item: no blacklist.
+            log("Buy Order wegen Bazaar-Cooldown nicht gesetzt: " + plan.displayName);
+            return false;
+        }
         if (lastFailureItemSpecific) {
             blacklistProduct(plan.productId, plan.displayName);
         } else {
@@ -514,8 +532,71 @@ public class Trader {
         long now = System.currentTimeMillis();
         long since = lastConfirmClickAt > 0 && now - lastConfirmClickAt < 15_000L
                 ? lastConfirmClickAt - 250L : now - 1500L;
+        // Hypixel's order cooldown answers instead of "Setup!": stop waiting right away.
         return BazaarChatListener.waitForChatSince(contains, since, timeoutMs,
-                this::isStopRequested);
+                () -> isStopRequested() || orderCooldownAt >= since);
+    }
+
+    /** Hypixel's order cooldown is running (set from chat). */
+    private boolean orderCooldownActive() {
+        return System.currentTimeMillis() < orderCooldownUntil;
+    }
+
+    private static String sellKey(String itemName) {
+        return ScreenUtil.cleanSpecials(itemName).toLowerCase();
+    }
+
+    /** Is {@code price} the price of one of our own open sell offers for this item? */
+    private boolean ownsSellPrice(String itemName, double price) {
+        List<Double> prices = ownSellPrices.get(sellKey(itemName));
+        if (prices == null || price <= 0) {
+            return false;
+        }
+        synchronized (prices) {
+            for (double own : prices) {
+                if (Math.abs(own - price) < 0.05) {
+                    return true;
+                }
+            }
+        }
+        return false;
+    }
+
+    private void rememberOwnSellPrice(String itemName, double price) {
+        if (price <= 0) {
+            return;
+        }
+        List<Double> prices = ownSellPrices.computeIfAbsent(sellKey(itemName),
+                k -> java.util.Collections.synchronizedList(new ArrayList<>()));
+        prices.add(price);
+    }
+
+    /** Learns from the inventory whether this item stacks (call while the items are in it). */
+    private void learnStacking(String itemName) {
+        long[] stacks = ScreenUtil.inventoryStacks(itemName);
+        if (stacks[1] > stacks[0]) {
+            singleStack.put(sellKey(itemName), false);
+        } else if (stacks[0] >= 2) {
+            singleStack.put(sellKey(itemName), true);
+        }
+    }
+
+    /** Inventory slots {@code qty} items need (unknown items count as stacking to 64). */
+    private int slotsNeeded(String itemName, long qty) {
+        if (qty <= 0) {
+            return 0;
+        }
+        boolean single = Boolean.TRUE.equals(singleStack.get(sellKey(itemName)));
+        return (int) Math.min(36, single ? qty : (qty + 63) / 64);
+    }
+
+    /**
+     * Room for {@code qty} items coming back from a cancelled sell offer, with one slot to
+     * spare. A cancelled offer returns all its items at once; what does not fit goes to the
+     * stash and the inventory is full.
+     */
+    private boolean inventoryRoomFor(String itemName, long qty) {
+        return ScreenUtil.freeInventorySlots() - 1 >= slotsNeeded(itemName, qty);
     }
 
     private void sleepOrStop(long ms) {
@@ -636,6 +717,13 @@ public class Trader {
         beat();
         if (isAhPriority()) {
             closeBazaarGui();
+            return;
+        }
+        if (orderCooldownActive()) {
+            // Every order placed now fails anyway; wait for Hypixel's cooldown to end.
+            logLimit("Bazaar-Cooldown aktiv - warte noch "
+                    + (orderCooldownUntil - System.currentTimeMillis()) / 1000 + "s");
+            cleanupGui();
             return;
         }
         long purse = ScreenUtil.readPurse();
@@ -1707,6 +1795,7 @@ public class Trader {
         lastScanHadOrders = !orders.isEmpty();
         scannedOrderProductIds.clear();
         if (orders.isEmpty()) {
+            ownSellPrices.clear();
             lastScannedOrderCount = 0;
             if (orderLimitReached) {
                 log("Order-Limit aufgehoben: Scan zeigt keine Orders");
@@ -1723,11 +1812,15 @@ public class Trader {
         }
         lastScannedBuyOrders.clear();
         lastScannedSellOffers.clear();
+        ownSellPrices.clear();
         for (ScreenUtil.GuiOrder order : orders) {
             if (!order.sellSide) {
                 lastScannedBuyOrders.add(order);
             } else {
                 lastScannedSellOffers.add(order);
+                if (order.amount <= 0 || order.filled < order.amount) {
+                    rememberOwnSellPrice(order.itemName, order.unitPrice);
+                }
             }
         }
         productByName.clear();
@@ -1757,32 +1850,7 @@ public class Trader {
                 }
                 continue;
             }
-            if (group.size() > 1) {
-                log("Mehrere Sell Offers für " + itemName + " (" + group.size() + ") - zusammenführen");
-                busy |= !mergeSellOrders(group, data);
-            } else {
-                ScreenUtil.GuiOrder order = group.get(0);
-                MarketData.Product product = productFor(order.itemName);
-                boolean outdated = product != null && product.bestAsk > 0
-                        && product.bestAsk < order.unitPrice - 0.05;
-                boolean coins = order.coinsClaimable && order.claimable > 0;
-                log("Sell-Check: " + order.itemName + " outdated=" + outdated + " coins=" + coins
-                        + " bestAsk=" + (product != null ? product.bestAsk : -1)
-                        + " unit=" + order.unitPrice);
-                if (coins) {
-                    busy |= !processSellEntry(order, data);
-                } else if (outdated) {
-                    String key = order.itemName.toLowerCase();
-                    Long last = sellRepriceCooldown.get(key);
-                    long nowMs = System.currentTimeMillis();
-                    if (last != null && nowMs - last < 5_000L) {
-                        log("Reprice-Cooldown (busy): " + order.itemName);
-                        busy = true;
-                    } else {
-                        busy |= !processSellEntry(order, data);
-                    }
-                }
-            }
+            busy |= !handleSellGroup(group, data);
             if (stopRequested) {
                 ordersBusy = true;
                 return true;
@@ -1945,8 +2013,153 @@ public class Trader {
         return cancelled;
     }
 
-    private boolean mergeSellOrders(List<ScreenUtil.GuiOrder> group, MarketData data) {
+    /**
+     * All our sell offers of one item. Offers are merged into one (fewer orders), but only as
+     * many as fit into the free inventory slots: merging cancels them all at once, and 42
+     * Summoning Eyes (one per slot) once filled the inventory, sent the rest to the stash and
+     * the new offer hit Hypixel's order cooldown. The others stay as they are; several offers
+     * on the best price are fine, Hypixel fills them one after the other. Offers are re-listed
+     * when someone else undercuts all of them, one at a time and only if they fit.
+     */
+    private boolean handleSellGroup(List<ScreenUtil.GuiOrder> group, MarketData data) {
         checkStop();
+        String itemName = group.get(0).itemName;
+        boolean ok = claimSellCoins(group);
+        if (stopRequested) {
+            return false;
+        }
+        List<ScreenUtil.GuiOrder> open = new ArrayList<>();
+        double ourBest = Double.MAX_VALUE;
+        for (ScreenUtil.GuiOrder order : group) {
+            if (order.amount > 0 && order.filled >= order.amount) {
+                continue;
+            }
+            open.add(order);
+            ourBest = Math.min(ourBest, order.unitPrice);
+        }
+        if (open.isEmpty()) {
+            return ok;
+        }
+        MarketData.Product product = productFor(itemName);
+        double bestAsk = product != null ? product.bestAsk : -1;
+        boolean undercut = bestAsk > 0 && bestAsk < ourBest - 0.05;
+        log("Sell-Check: " + itemName + " offers=" + group.size() + " undercut=" + undercut
+                + " bestAsk=" + bestAsk + " ours=" + ourBest);
+        // smallest first: they fit the inventory best
+        open.sort(Comparator.comparingLong(ScreenUtil.GuiOrder::remaining));
+        boolean merged = false;
+        if (open.size() > 1) {
+            List<ScreenUtil.GuiOrder> fit = mergeableOffers(open, itemName);
+            if (fit.size() >= 2) {
+                if (!mergeSellOffers(fit, itemName, data)) {
+                    return false;
+                }
+                merged = true;
+                open.removeIf(order -> fit.stream().anyMatch(f -> f == order));
+            } else {
+                logInventory("Sell Offers für " + itemName + " passen zusammen nicht ins Inventar ("
+                        + ScreenUtil.freeInventorySlots() + " Slots frei) - bleiben einzeln stehen");
+            }
+            if (stopRequested) {
+                return false;
+            }
+        }
+        if (!undercut || open.isEmpty()) {
+            return ok;
+        }
+        Long last = sellRepriceCooldown.get(itemName.toLowerCase());
+        if (!merged && last != null && System.currentTimeMillis() - last < 5_000L) {
+            log("Reprice-Cooldown (busy): " + itemName);
+            return false;
+        }
+        for (ScreenUtil.GuiOrder order : open) {
+            if (!inventoryRoomFor(itemName, order.remaining())) {
+                logInventory("Kein Platz im Inventar für " + order.remaining() + "x " + itemName
+                        + " - Sell Offer bleibt vorerst stehen");
+                break;
+            }
+            if (!relistSellOffer(order)) {
+                return false;
+            }
+            if (stopRequested) {
+                return false;
+            }
+        }
+        return ok;
+    }
+
+    /**
+     * The offers (smallest first) whose items together fit into the free inventory slots,
+     * one slot to spare. Merging cancels them all at once, so 30 + 11 Summoning Eyes with 25
+     * free slots are not merged; 2 + 5 + 11 are.
+     */
+    private List<ScreenUtil.GuiOrder> mergeableOffers(List<ScreenUtil.GuiOrder> sortedOpen, String itemName) {
+        int free = ScreenUtil.freeInventorySlots() - 1;
+        List<ScreenUtil.GuiOrder> fit = new ArrayList<>();
+        long total = 0;
+        for (ScreenUtil.GuiOrder order : sortedOpen) {
+            long next = total + order.remaining();
+            if (order.remaining() <= 0 || slotsNeeded(itemName, next) > free) {
+                break;
+            }
+            fit.add(order);
+            total = next;
+        }
+        return fit;
+    }
+
+    /**
+     * Cancels these offers and lists all their items as one offer: fewer orders in the
+     * Manage Orders menu. If the best offer is still one of ours (an offer that was not
+     * merged), the new one takes the same price.
+     */
+    private boolean mergeSellOffers(List<ScreenUtil.GuiOrder> offers, String itemName, MarketData data) {
+        long total = offers.stream().mapToLong(ScreenUtil.GuiOrder::remaining).sum();
+        log("Führe " + offers.size() + " Sell Offers für " + itemName + " zusammen (" + total
+                + "x, " + ScreenUtil.freeInventorySlots() + " Slots frei)");
+        Trade merged = null;
+        for (ScreenUtil.GuiOrder order : offers) {
+            Trade base = ensureTradeFor(order);
+            cancelSellOffer(base, order);
+            if (base.state != Trade.State.CLAIMED) {
+                break; // cancel failed: list what came back so far
+            }
+            if (merged == null) {
+                merged = base;
+            } else if (base != merged) {
+                base.qty = 0;
+                base.cost = 0;
+                base.state = Trade.State.ABANDONED;
+                ledger.update(base);
+            }
+            if (stopRequested) {
+                return false;
+            }
+        }
+        if (merged == null) {
+            return false;
+        }
+        merged.qty = ScreenUtil.countItemsInInventory(merged.displayName);
+        if (merged.qty <= 0) {
+            log("Merge: keine Items im Inventar: " + merged.displayName);
+            return false;
+        }
+        merged.cost = merged.qty * merged.buyPrice;
+        merged.state = Trade.State.CLAIMED;
+        ledger.update(merged);
+        refreshMarketIfStale();
+        MarketData fresh = market != null ? market : data;
+        if (!createSellOfferFromInventory(merged, fresh)) {
+            return false;
+        }
+        sellRepriceCooldown.put(itemName.toLowerCase(), System.currentTimeMillis());
+        chat("§6[Flipper] §aMerged sell offers: §f" + merged.qty + "x " + merged.displayName
+                + " §7@ §f" + ScreenUtil.formatPrice(merged.sellPrice));
+        return true;
+    }
+
+    /** Claims the coins of (partly) sold offers in the group. */
+    private boolean claimSellCoins(List<ScreenUtil.GuiOrder> group) {
         String itemName = group.get(0).itemName;
         for (ScreenUtil.GuiOrder order : group) {
             if (!order.coinsClaimable || order.claimable <= 0) {
@@ -1973,6 +2186,8 @@ public class Trader {
                         trade.state = Trade.State.DONE;
                         markProductSuccess(trade.productId);
                         ledger.update(trade);
+                    } else {
+                        chat("§6[Flipper] §aCoins claimed: §f" + itemName);
                     }
                 }
             }
@@ -1981,48 +2196,35 @@ public class Trader {
                 return false;
             }
         }
-        List<Trade> cancelled = new ArrayList<>();
-        for (ScreenUtil.GuiOrder order : group) {
-            if (order.coinsClaimable && order.claimable > 0) {
-                continue;
-            }
-            Trade base = ensureTradeFor(order);
-            cancelSellOffer(base);
-            if (base.state == Trade.State.CLAIMED) {
-                cancelled.add(base);
-            }
-            if (stopRequested) {
-                return false;
-            }
-        }
-        if (cancelled.isEmpty()) {
-            return true;
-        }
-        refreshMarketIfStale();
-        MarketData fresh = market != null ? market : data;
-        Trade merged = cancelled.get(0);
-        merged.qty = ScreenUtil.countItemsInInventory(merged.displayName);
-        if (merged.qty <= 0) {
-            log("Merge: keine Items im Inventar: " + merged.displayName);
+        return true;
+    }
+
+    /** Cancels this sell offer and lists its items again at the current best price. */
+    private boolean relistSellOffer(ScreenUtil.GuiOrder order) {
+        log("Sell Offer unterboten - stelle neu ein: " + order.itemName + " @ " + order.unitPrice);
+        Trade base = ensureTradeFor(order);
+        cancelSellOffer(base, order);
+        if (base.state != Trade.State.CLAIMED || stopRequested) {
             return false;
         }
-        merged.cost = merged.qty * merged.buyPrice;
-        merged.state = Trade.State.CLAIMED;
-        ledger.update(merged);
-        for (int i = 1; i < cancelled.size(); i++) {
-            Trade other = cancelled.get(i);
-            other.qty = 0;
-            other.cost = 0;
-            other.state = Trade.State.ABANDONED;
-            ledger.update(other);
+        if (order.remaining() > 0) {
+            base.qty = order.remaining();
+            base.cost = base.qty * base.buyPrice;
         }
-        boolean listed = createSellOfferFromInventory(merged, fresh);
-        if (listed) {
-            sellRepriceCooldown.put(merged.displayName.toLowerCase(), System.currentTimeMillis());
-            chat("\u00a76[Flipper] \u00a7aMerged sell offers: \u00a7f" + merged.qty + "x " + merged.displayName + " \u00a77@ \u00a7f" + ScreenUtil.formatPrice(merged.sellPrice));
-            return true;
+        refreshMarketIfStale();
+        MarketData fresh = market;
+        boolean listed = fresh != null && createSellOfferFromInventory(base, fresh);
+        if (!listed) {
+            log("Re-Listing fehlgeschlagen - Items bleiben im Inventar: " + order.itemName);
+            return false;
         }
-        return false;
+        base.outbidChecks = 0;
+        base.lastRelistedAt = System.currentTimeMillis();
+        ledger.update(base);
+        sellRepriceCooldown.put(order.itemName.toLowerCase(), System.currentTimeMillis());
+        chat("§6[Flipper] §aSell offer updated: §f" + base.qty + "x " + base.displayName
+                + " §7@ §f" + ScreenUtil.formatPrice(base.sellPrice));
+        return true;
     }
 
     private boolean processSellEntry(ScreenUtil.GuiOrder order, MarketData data) {
@@ -2084,28 +2286,14 @@ public class Trader {
             cleanupGui();
             return true;
         }
-        log("Sell Offer outdated - stelle neu ein: " + order.itemName + " @ " + order.unitPrice);
-        Trade base = ensureTradeFor(order);
-        cancelSellOffer(base);
-        if (base.state == Trade.State.CLAIMED && !stopRequested) {
-            refreshMarketIfStale();
-            MarketData fresh = market;
-            boolean listed = false;
-            if (fresh != null) {
-                listed = createSellOfferFromInventory(base, fresh);
-            }
-            if (!listed) {
-                log("Re-Listing fehlgeschlagen - Items bleiben im Inventar: " + order.itemName);
-                return false;
-            }
-            base.outbidChecks = 0;
-            base.lastRelistedAt = System.currentTimeMillis();
-            ledger.update(base);
-            sellRepriceCooldown.put(order.itemName.toLowerCase(), System.currentTimeMillis());
-            chat("\u00a76[Flipper] \u00a7aSell offer updated: \u00a7f" + base.displayName + " \u00a77@ \u00a7f" + ScreenUtil.formatPrice(base.sellPrice));
+        if (!inventoryRoomFor(order.itemName, order.remaining())) {
+            logInventory("Kein Platz im Inventar für " + order.remaining() + "x " + order.itemName
+                    + " - Sell Offer bleibt vorerst stehen");
+            cleanupGui();
             return true;
         }
-        return false;
+        cleanupGui();
+        return relistSellOffer(order);
     }
 
     private boolean claimEntryItems(ScreenUtil.GuiOrder target, ScreenUtil.GuiOrder order, MarketData data) {
@@ -2491,20 +2679,31 @@ public class Trader {
         return false;
     }
 
+    /**
+     * Cancels a buy order. While it is being cancelled it can keep filling: every click claims
+     * what filled since. Those claims are collected and listed as one sell offer at the end
+     * (it used to be one offer per claim: 2x, 25x, 12x, 3x Summoning Eye, which then got
+     * merged). If the inventory fills up, the claimed items are listed first and the cancel
+     * waits for the next pass.
+     */
     private boolean cancelBuyOrder(Trade trade, String reason, MarketData data) {
         checkStop();
+        Trade claimed = null;
         for (int round = 0; round < 4 && !stopRequested; round++) {
             if (!openOrdersGui()) {
+                listClaimed(claimed, data);
                 return false;
             }
             int slot = findOrderSlotRetry(trade.displayName, false, 4000);
             if (slot < 0) {
                 handleMissingOrder(trade, data);
+                listClaimed(claimed, data);
                 return false;
             }
             trade.notFoundChecks = 0;
             ledger.update(trade);
             manualClaimFlow = true;
+            long clickAt = System.currentTimeMillis();
             if (!clickOrder(trade.displayName, false, 0, 5000, "Order-Eintrag (Cancel): " + trade.displayName)) {
                 manualClaimFlow = false;
                 break;
@@ -2513,29 +2712,21 @@ public class Trader {
             manualClaimFlow = false;
             if (claimedNow > 0) {
                 log("Cancel-Flow: " + claimedNow + "x geclaimt: " + trade.displayName);
-                Trade batch = new Trade();
-                batch.productId = trade.productId;
-                batch.displayName = trade.displayName;
-                batch.qty = claimedNow;
-                batch.buyPrice = trade.buyPrice;
-                batch.sellPrice = trade.sellPrice;
-                batch.cost = claimedNow * trade.buyPrice;
-                batch.state = Trade.State.CLAIMED;
-                batch.createdAt = System.currentTimeMillis();
-                ledger.add(batch);
-                trade.qty = Math.max(0, trade.qty - claimedNow);
-                trade.cost = trade.qty * trade.buyPrice;
-                ledger.update(trade);
-                chat("\u00a76[Flipper] \u00a7aClaimed: \u00a7f" + claimedNow + "x " + trade.displayName);
-                cleanupGui();
-                if (data != null) {
-                    createSellOfferFromInventory(batch, data);
+                claimed = addClaimed(claimed, trade, claimedNow);
+                if (inventoryFullSince(clickAt) || ScreenUtil.freeInventorySlots() < 2) {
+                    log("Inventar voll beim Claim - erst verkaufen, Cancel später: " + trade.displayName);
+                    cleanupGui();
+                    listClaimed(claimed, data);
+                    return false;
                 }
+                cleanupGui();
                 continue;
             }
             if (ScreenUtil.currentScreen() == ScreenUtil.BzScreen.ORDER_OPTIONS
                     || waitForScreenCancel(ScreenUtil.BzScreen.ORDER_OPTIONS, 2000)) {
-                return confirmCancel(trade, reason);
+                boolean done = confirmCancel(trade, reason);
+                listClaimed(claimed, data);
+                return done;
             }
             if (!clickOrder(trade.displayName, false, 1, 5000, "Order-Eintrag Rechtsklick (Cancel): " + trade.displayName)) {
                 break;
@@ -2545,13 +2736,52 @@ public class Trader {
             }
             if (ScreenUtil.currentScreen() == ScreenUtil.BzScreen.ORDER_OPTIONS
                     || waitForScreenCancel(ScreenUtil.BzScreen.ORDER_OPTIONS, 3000)) {
-                return confirmCancel(trade, reason);
+                boolean done = confirmCancel(trade, reason);
+                listClaimed(claimed, data);
+                return done;
             }
             break;
         }
-        failPause("Cancel-Flow unklar: " + trade.displayName);
         cleanupGui();
+        if (claimed != null) {
+            // It kept filling while we tried to cancel: sell what we have, cancel next pass.
+            listClaimed(claimed, data);
+            return false;
+        }
+        failPause("Cancel-Flow unklar: " + trade.displayName);
         return false;
+    }
+
+    /** Adds a claim from {@code order} to the collected batch (one ledger trade). */
+    private Trade addClaimed(Trade batch, Trade order, long qty) {
+        if (batch == null) {
+            batch = new Trade();
+            batch.productId = order.productId;
+            batch.displayName = order.displayName;
+            batch.buyPrice = order.buyPrice;
+            batch.sellPrice = order.sellPrice;
+            batch.state = Trade.State.CLAIMED;
+            batch.createdAt = System.currentTimeMillis();
+            batch.qty = qty;
+            batch.cost = qty * order.buyPrice;
+            ledger.add(batch);
+        } else {
+            batch.qty += qty;
+            batch.cost = batch.qty * batch.buyPrice;
+            ledger.update(batch);
+        }
+        order.qty = Math.max(0, order.qty - qty);
+        order.cost = order.qty * order.buyPrice;
+        ledger.update(order);
+        chat("§6[Flipper] §aClaimed: §f" + qty + "x " + order.displayName);
+        return batch;
+    }
+
+    private void listClaimed(Trade batch, MarketData data) {
+        if (batch != null && data != null && !stopRequested) {
+            cleanupGui();
+            createSellOfferFromInventory(batch, data);
+        }
     }
 
     private boolean confirmCancel(Trade trade, String reason) {
@@ -2577,7 +2807,11 @@ public class Trader {
         return false;
     }
 
-    private void cancelSellOffer(Trade trade) {
+    /**
+     * Cancels a sell offer of this item. With {@code exact}, the offer with that price and amount
+     * is clicked (an item can now have several offers); otherwise the first one.
+     */
+    private void cancelSellOffer(Trade trade, ScreenUtil.GuiOrder exact) {
         checkStop();
         if (!openOrdersGui()) {
             return;
@@ -2590,7 +2824,21 @@ public class Trader {
         }
         trade.notFoundChecks = 0;
         ledger.update(trade);
-        if (!clickOrder(trade.displayName, true, 0, 5000, "Sell-Eintrag (Cancel): " + trade.displayName)) {
+        ScreenUtil.GuiOrder target = null;
+        if (exact != null) {
+            for (ScreenUtil.GuiOrder entry : ScreenUtil.scanOrders()) {
+                if (entry.sellSide && entry.amount == exact.amount
+                        && Math.abs(entry.unitPrice - exact.unitPrice) < 0.05
+                        && ScreenUtil.fuzzyItemMatch(entry.itemName, exact.itemName)) {
+                    target = entry;
+                    break;
+                }
+            }
+        }
+        boolean clicked = target != null
+                ? ScreenUtil.clickOrderSlotByIndex(target.slot, target.itemName, true, 0)
+                : clickOrder(trade.displayName, true, 0, 5000, "Sell-Eintrag (Cancel): " + trade.displayName);
+        if (!clicked) {
             failPause("Order-Eintrag nicht klickbar (Sell-Cancel): " + trade.displayName);
             return;
         }
@@ -2615,6 +2863,10 @@ public class Trader {
             // Hypixel keeps a cancelled offer on the daily limit, so it is not subtracted.
             trade.state = Trade.State.CLAIMED;
             ledger.update(trade);
+            List<Double> prices = ownSellPrices.get(sellKey(trade.displayName));
+            if (prices != null && exact != null) {
+                prices.removeIf(price -> Math.abs(price - exact.unitPrice) < 0.05);
+            }
             chat("\u00a76[Flipper] \u00a77Sell offer cancelled for repricing: \u00a7f" + trade.displayName);
         } else {
             failPause("Sell-Cancel nicht bestätigt: " + trade.displayName);
@@ -2677,6 +2929,7 @@ public class Trader {
             failPause("Keine Items im Inventar: " + trade.displayName);
             return false;
         }
+        learnStacking(trade.displayName);
         long qty = trade.qty > 0 ? Math.min(trade.qty, inInventory) : inInventory;
         trade.qty = qty;
         trade.cost = qty * trade.buyPrice;
@@ -2710,6 +2963,19 @@ public class Trader {
                 targetSell = freshPrice;
             }
         }
+        // "Same as Best Offer" shows the best offer's unit price. If that is our own offer,
+        // take the same price: undercutting ourselves only lowered the price step by step
+        // and left several offers at different prices that later got merged.
+        double bestOffer = ScreenUtil.buttonUnitPrice("Same as Best Offer");
+        if (bestOffer > 0 && ownsSellPrice(trade.displayName, bestOffer)
+                && clickExactName("Same as Best Offer", 0, 3000, "Same as Best Offer")) {
+            log("Best Offer ist schon unsere (" + ScreenUtil.formatPrice(bestOffer)
+                    + ") - gleicher Preis statt -0.1: " + trade.displayName);
+            return confirmSellOffer(trade, bestOffer);
+        }
+        if (bestOffer > 0) {
+            targetSell = Math.round((bestOffer - 0.1) * 10.0) / 10.0;
+        }
         boolean usedUndercut = clickByName("Best Offer -0.1", 0, 3000, "Best Offer -0.1");
         if (!usedUndercut) {
             usedUndercut = clickByName("Below", 0, 3000, "Below");
@@ -2742,6 +3008,11 @@ public class Trader {
                 }
             }
         }
+        return confirmSellOffer(trade, targetSell);
+    }
+
+    /** Sell price chosen: confirm the offer and wait for Hypixel's "Sell Offer Setup!". */
+    private boolean confirmSellOffer(Trade trade, double targetSell) {
         if (!waitForScreenCancel(ScreenUtil.BzScreen.SELL_CONFIRM, 6000)) {
             failPause("SELL_CONFIRM nicht erreicht: " + trade.displayName);
             return false;
@@ -2752,9 +3023,17 @@ public class Trader {
             return false;
         }
         if (!waitForConfirmChat("Sell Offer Setup!", 12_000)) {
+            if (orderCooldownActive()) {
+                // Not our fault and not stuck: the items stay in the inventory and are
+                // listed once the cooldown is over.
+                log("Bazaar-Cooldown - Sell Offer später: " + trade.displayName);
+                cleanupGui();
+                return false;
+            }
             failPause("Keine 'Sell Offer Setup!' Bestätigung: " + trade.displayName);
             return false;
         }
+        rememberOwnSellPrice(trade.displayName, targetSell);
         trade.sellPrice = targetSell;
         trade.revenue = trade.qty * targetSell * (1.0 - cfg.taxPercent / 100.0);
         trade.state = Trade.State.SELL_OPEN;
@@ -3026,7 +3305,7 @@ public class Trader {
             return;
         }
         switch (event.type) {
-            case ORDER_LIMIT, INVENTORY_FULL, DAILY_BUY_LIMIT, OTHER -> {
+            case ORDER_LIMIT, INVENTORY_FULL, DAILY_BUY_LIMIT, COOLDOWN, OTHER -> {
             }
             default -> troubleSince = 0; // a Bazaar action went through
         }
@@ -3136,6 +3415,17 @@ public class Trader {
                         stashPending = true;
                     }
                     log("Inventar voll laut Chat: " + event.raw);
+                }
+                case COOLDOWN -> {
+                    long now = System.currentTimeMillis();
+                    boolean fresh = now >= orderCooldownUntil;
+                    orderCooldownAt = now;
+                    // "for up to 1 minute": wait the full minute plus a little.
+                    orderCooldownUntil = now + 65_000L;
+                    log("Bazaar-Cooldown: " + event.raw);
+                    if (fresh) {
+                        chat("§6[Flipper] §eBazaar order cooldown §7- waiting 1 min, then it goes on.");
+                    }
                 }
                 case ORDER_LIMIT -> {
                     orderLimitReached = true;

@@ -715,7 +715,7 @@ public final class GlassRenderingTest implements FabricClientGameTest {
             Screen screen=client.gui.screen();
             Button button=screen.children().stream().filter(c -> c instanceof Button)
                     .map(c -> (Button)c).filter(b -> b.getMessage().getString().equals(label)).findFirst().orElseThrow();
-            float scale=pingplus.voicechat.client.gui.ClickGuiScreen.UI_SCALE;
+            float scale=pingplus.voicechat.client.gui.ClickGuiScreen.currentScale();
             var event=new net.minecraft.client.input.MouseButtonEvent((button.getX()+button.getWidth()/2.0)*scale,
                     (button.getY()+button.getHeight()/2.0)*scale,new net.minecraft.client.input.MouseButtonInfo(0,0));
             if(!screen.mouseClicked(event,false))throw new AssertionError("Missed scaled button: "+label);

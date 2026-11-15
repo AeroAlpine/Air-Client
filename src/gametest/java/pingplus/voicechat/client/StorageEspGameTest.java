@@ -186,8 +186,8 @@ public final class StorageEspGameTest {
             var screen = client.gui.screen();
             var button = screen.children().stream().filter(child -> child instanceof Button).map(child -> (Button)child)
                     .filter(child -> child.getMessage().getString().equals(label)).findFirst().orElseThrow();
-            var event = new MouseButtonEvent((button.getX() + 5) * ClickGuiScreen.UI_SCALE,
-                    (button.getY() + 5) * ClickGuiScreen.UI_SCALE, new MouseButtonInfo(0, 0));
+            var event = new MouseButtonEvent((button.getX() + 5) * ClickGuiScreen.currentScale(),
+                    (button.getY() + 5) * ClickGuiScreen.currentScale(), new MouseButtonInfo(0, 0));
             check(screen.mouseClicked(event, false), "clicked " + label); screen.mouseReleased(event);
         });
     }

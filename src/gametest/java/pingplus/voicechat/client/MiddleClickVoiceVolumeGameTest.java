@@ -88,7 +88,7 @@ final class MiddleClickVoiceVolumeGameTest {
 
             var fps = new FpsHud(); var coordinates = new CoordinatesHud();
             context.setScreen(() -> new ClickGuiScreen(fps,VoicechatClient.openGuiKey(),coordinates,new ArraylistHud(fps,coordinates)));
-            context.runOnClient(client -> click(client.gui.screen(),button(client.gui.screen(),"Middle-click volume"),ClickGuiScreen.UI_SCALE));
+            context.runOnClient(client -> click(client.gui.screen(),button(client.gui.screen(),"Middle-click volume"),ClickGuiScreen.currentScale()));
             context.runOnClient(client -> check(!settings.middleClickVolume && !VoiceSettings.load().middleClickVolume, "ClickGUI toggle must disable and persist"));
             context.setScreen(() -> null);
             awaitTarget(context,target.get());

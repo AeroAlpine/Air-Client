@@ -278,6 +278,11 @@ public final class ScreenUtil {
         public long claimable;
         public boolean coinsClaimable;
         public int slot;
+
+        /** Items not filled yet (what a cancel gives back for a sell offer). */
+        public long remaining() {
+            return amount > 0 ? Math.max(0, amount - filled) : 0;
+        }
     }
 
     public static List<GuiOrder> scanOrders() {
@@ -1122,6 +1127,65 @@ public final class ScreenUtil {
             int sinceHurt = client.player.tickCount - client.player.getLastHurtByMobTimestamp();
             return sinceHurt >= 0 && sinceHurt < 100;
         }));
+    }
+
+    /**
+     * "Unit price: 1,259,734.7 coins" from the lore of the menu button named exactly
+     * {@code buttonName} (e.g. "Same as Best Offer"), or -1.
+     */
+    public static double buttonUnitPrice(String buttonName) {
+        Double price = sync(() -> {
+            Minecraft client = Minecraft.getInstance();
+            if (!(client.gui.screen() instanceof AbstractContainerScreen<?> container)) {
+                return -1.0;
+            }
+            java.util.regex.Pattern unit = java.util.regex.Pattern
+                    .compile("(?i)unit price:\\s*([\\d,]+(?:\\.\\d+)?)");
+            for (int i = 0; i < containerSize(container); i++) {
+                ItemStack stack = itemAt(container, i);
+                if (stack.isEmpty() || stack.getCustomName() == null
+                        || !cleanName(stack.getCustomName().getString()).equalsIgnoreCase(buttonName)) {
+                    continue;
+                }
+                var lore = stack.get(DataComponents.LORE);
+                if (lore == null) {
+                    return -1.0;
+                }
+                for (Component line : lore.lines()) {
+                    java.util.regex.Matcher matcher = unit.matcher(cleanName(line.getString()));
+                    if (matcher.find()) {
+                        try {
+                            return Double.parseDouble(matcher.group(1).replace(",", ""));
+                        } catch (NumberFormatException ignored) {
+                            return -1.0;
+                        }
+                    }
+                }
+                return -1.0;
+            }
+            return -1.0;
+        });
+        return price == null ? -1 : price;
+    }
+
+    /** {stacks, items} of this item in the player inventory (to learn if it stacks). */
+    public static long[] inventoryStacks(String displayName) {
+        long[] result = sync(() -> {
+            Minecraft client = Minecraft.getInstance();
+            long[] counts = new long[2];
+            if (client == null || client.player == null) {
+                return counts;
+            }
+            for (int i = 0; i < 36; i++) {
+                long count = matchingCount(client.player.getInventory().getItem(i), displayName);
+                if (count > 0) {
+                    counts[0]++;
+                    counts[1] += count;
+                }
+            }
+            return counts;
+        });
+        return result == null ? new long[2] : result;
     }
 
     public static long countItemsInInventory(String displayName) {

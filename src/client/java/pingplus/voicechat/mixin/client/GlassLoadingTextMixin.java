@@ -15,6 +15,6 @@ public abstract class GlassLoadingTextMixin {
     @ModifyArg(method = "extractRenderState", at = @At(value = "INVOKE", target =
             "Lnet/minecraft/client/gui/GuiGraphicsExtractor;centeredText(Lnet/minecraft/client/gui/Font;Lnet/minecraft/network/chat/Component;III)V"), index = 1)
     private Component glassStatus(Component original) {
-        return original.copy().withStyle(GlassStyle.FONT);
+        return original.copy().withStyle(GlassStyle.font());
     }
 }

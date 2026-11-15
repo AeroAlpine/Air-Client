@@ -59,7 +59,13 @@ public final class HudEditor {
             for (Button source : e.controls().get()) source.setFocused(proxy(source, b).isFocused());
             g.pose().pushMatrix();
             g.pose().translate((float)b.x(), (float)b.y()); g.pose().scale((float)b.scale());
-            e.renderer().draw(g, editing ? (int)b.localX(mx) : -100, editing ? (int)b.localY(my) : -100, dt, editing);
+            // scaled HUD text: use the font raster that is pixel-exact at this size
+            GlassStyle.textScale((float)(Minecraft.getInstance().getWindow().getGuiScale() * b.scale()));
+            try {
+                e.renderer().draw(g, editing ? (int)b.localX(mx) : -100, editing ? (int)b.localY(my) : -100, dt, editing);
+            } finally {
+                GlassStyle.textScale(0);
+            }
             g.pose().popMatrix();
             for (Button source : e.controls().get()) proxy(source, b);
             if (editing) {

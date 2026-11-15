@@ -50,6 +50,9 @@ public final class BazaarChatEventTest {
         check("player chat", BazaarChatEvent.parse(
                 "[289] [MVP+] qbreese: 5x hype claimed and cancelled") == null);
         check("progress line", BazaarChatEvent.parse("[Bazaar] Submitting buy order...") == null);
+        BazaarChatEvent cooldown = BazaarChatEvent.parse(
+                "[Bazaar] Placing orders is on cooldown for up to 1 minute!");
+        check("order cooldown", cooldown != null && cooldown.type == BazaarChatEvent.Type.COOLDOWN);
 
         if (failures > 0) {
             throw new AssertionError(failures + " check(s) failed");

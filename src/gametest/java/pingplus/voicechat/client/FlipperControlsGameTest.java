@@ -49,8 +49,8 @@ final class FlipperControlsGameTest {
                 check(!Component.translatable(bazaar.getName()).getString().equals(bazaar.getName()), "Bazaar key label was not loaded");
             });
             controls(context);
-            press(context,"Auction Flipper");
-            press(context,"Bazaar Flipper");
+            flip(context,"Auction Flipper");
+            flip(context,"Bazaar Flipper");
             context.runOnClient(client -> check(!AhFlipperMod.isRunning() && !FlipperMod.isRunning(),
                     "Control-center toggles bypassed the SkyBlock requirement"));
 
@@ -85,9 +85,9 @@ final class FlipperControlsGameTest {
             activate(context);
             context.waitTicks(3);
             context.takeScreenshot("clickgui-flippers-and-keys");
-            press(context,"Auction Flipper");
+            flip(context,"Auction Flipper");
             long before=System.nanoTime();
-            press(context,"Bazaar Flipper");
+            flip(context,"Bazaar Flipper");
             check(System.nanoTime()-before < 1_000_000_000L,"Stopping Bazaar blocked the control center");
             awaitStopped(context);
             context.runOnClient(client -> check(client.gui.screen() instanceof ClickGuiScreen,"Stopping a flipper closed the control center"));
@@ -139,8 +139,9 @@ final class FlipperControlsGameTest {
 
     private static void activate(ClientGameTestContext context) {
         context.runOnClient(client -> {
-            click(client.gui.screen(),button(client.gui.screen(),"Auction Flipper"));
-            click(client.gui.screen(),button(client.gui.screen(),"Bazaar Flipper"));
+            // The flipper toggles moved into the SkyBlock menu; its cards run these same toggles.
+            AhFlipperMod.toggle();
+            FlipperMod.toggle();
             Trader.get().setPaused(true);
             check(AhFlipperMod.isRunning() && FlipperMod.isRunning(),"Flipper controls did not start their real runtimes");
         });
@@ -151,6 +152,12 @@ final class FlipperControlsGameTest {
     private static void controls(ClientGameTestContext context) {
         var fps=new FpsHud(); var coordinates=new CoordinatesHud();
         context.setScreen(() -> new ClickGuiScreen(fps,VoicechatClient.openGuiKey(),coordinates,new ArraylistHud(fps,coordinates)));
+    }
+    /** The SkyBlock menu card toggle of a bot (the Controller Center no longer has one). */
+    private static void flip(ClientGameTestContext context,String name) {
+        context.runOnClient(client -> {
+            if (name.equals("Auction Flipper")) AhFlipperMod.toggle(); else FlipperMod.toggle();
+        });
     }
     private static void press(ClientGameTestContext context,String name) {
         context.runOnClient(client -> click(client.gui.screen(),button(client.gui.screen(),name)));
@@ -164,8 +171,8 @@ final class FlipperControlsGameTest {
                 .filter(w -> w.getMessage().getString().startsWith(name+": ")).findFirst().orElseThrow();
     }
     private static void click(Screen screen,Button button) {
-        var event=new MouseButtonEvent((button.getX()+button.getWidth()/2.0)*ClickGuiScreen.UI_SCALE,
-                (button.getY()+button.getHeight()/2.0)*ClickGuiScreen.UI_SCALE,new MouseButtonInfo(0,0));
+        var event=new MouseButtonEvent((button.getX()+button.getWidth()/2.0)*ClickGuiScreen.currentScale(),
+                (button.getY()+button.getHeight()/2.0)*ClickGuiScreen.currentScale(),new MouseButtonInfo(0,0));
         check(screen.mouseClicked(event,false),"Control rejected input: "+button.getMessage().getString());
         screen.mouseReleased(event);
     }

@@ -46,8 +46,8 @@ final class ProfileGameTest {
             context.runOnClient(client -> {
                 Screen screen = client.gui.screen();
                 Button open = button(screen, "Profiles");
-                var click = new MouseButtonEvent((open.getX() + 20) * ClickGuiScreen.UI_SCALE,
-                        (open.getY() + 9) * ClickGuiScreen.UI_SCALE, new MouseButtonInfo(0, 0));
+                var click = new MouseButtonEvent((open.getX() + 20) * ClickGuiScreen.currentScale(),
+                        (open.getY() + 9) * ClickGuiScreen.currentScale(), new MouseButtonInfo(0, 0));
                 check(screen.mouseClicked(click, false), "Profiles toolbar button rejected scaled input");
                 check(client.gui.screen() instanceof ProfilesScreen, "Profiles toolbar did not open profiles");
             });

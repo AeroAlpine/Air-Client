@@ -12,6 +12,6 @@ public abstract class GlassMessageTextMixin {
     @ModifyArg(method = "init", at = @At(value = "INVOKE", target =
             "Lnet/minecraft/client/gui/components/FocusableTextWidget;builder(Lnet/minecraft/network/chat/Component;Lnet/minecraft/client/gui/Font;I)Lnet/minecraft/client/gui/components/FocusableTextWidget$Builder;"), index = 0)
     private Component glassStatus(Component original) {
-        return original.copy().withStyle(GlassStyle.FONT);
+        return original.copy().withStyle(GlassStyle.font());
     }
 }

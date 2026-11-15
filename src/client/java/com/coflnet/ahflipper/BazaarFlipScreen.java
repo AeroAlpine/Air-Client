@@ -34,6 +34,19 @@ public final class BazaarFlipScreen extends Screen {
         super(Component.literal("Bazaar Flips"));
     }
 
+    /** Screen to go back to on close (the SkyBlock menu); null = back to the game. */
+    private net.minecraft.client.gui.screens.Screen parent;
+
+    public BazaarFlipScreen withParent(net.minecraft.client.gui.screens.Screen parent) {
+        this.parent = parent;
+        return this;
+    }
+
+    @Override
+    public void onClose() {
+        minecraft.gui.setScreen(parent);
+    }
+
     @Override
     protected void init() {
         BazaarFlipTracker.start();
@@ -51,7 +64,7 @@ public final class BazaarFlipScreen extends Screen {
         addRenderableWidget(actionButton(panelX + 208, footerY, 96, 18, () -> "AH Investments",
                 () -> {
                     AhInvestmentTracker.start();
-                    minecraft.gui.setScreen(new AhInvestmentScreen());
+                    minecraft.gui.setScreen(new AhInvestmentScreen().withParent(parent));
                 }));
         addRenderableWidget(actionButton(panelX + panelWidth - 86, footerY, 78, 18,
                 () -> "Close", this::onClose));

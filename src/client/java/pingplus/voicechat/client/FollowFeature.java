@@ -72,6 +72,9 @@ public final class FollowFeature {
     private static int queueCooldown;
     /** One-hit mode: mobs already clicked once, ignored until the time stored here. */
     private static final java.util.Map<UUID, Long> HIT_ONCE = new java.util.HashMap<>();
+    /** Combat panel: targets finished (killed, or clicked once in one-hit mode) since start. */
+    private static int done;
+    private static long startedAt;
     private static final long HIT_ONCE_IGNORE_MS = 6_000L;
 
     private FollowFeature() {
@@ -118,10 +121,53 @@ public final class FollowFeature {
         return removed;
     }
 
+    /** What the Combat panel shows. */
+    public record Status(boolean on, String state, String target, double distance, List<String> next,
+                         int done, long runningMs) {
+    }
+
+    public static Status status() {
+        Minecraft client = Minecraft.getInstance();
+        LocalPlayer player = client.player;
+        boolean on = PlayerSettings.combatEnabled;
+        long running = on && startedAt > 0 ? System.currentTimeMillis() - startedAt : 0;
+        if (!on || player == null) {
+            return new Status(false, "Off", "", 0, List.of(), done, running);
+        }
+        List<String> next = new java.util.ArrayList<>();
+        for (Entity entity : queue) {
+            if (entity != followed && !entity.isRemoved()) {
+                next.add(name(entity) + "  " + Math.round(player.distanceTo(entity)) + "m");
+            }
+        }
+        if (targets().isEmpty()) {
+            return new Status(true, "No targets set", "", 0, next, done, running);
+        }
+        if (otherBotUsesBaritone()) {
+            return new Status(true, "Paused (other bot)", "", 0, next, done, running);
+        }
+        if (followed == null) {
+            return new Status(true, "Searching", "", 0, next, done, running);
+        }
+        double distance = player.distanceTo(followed);
+        String state = PlayerSettings.followAttack || PlayerSettings.combatOneHit
+                ? (distance <= PlayerSettings.followDistance + 1.5 ? "Fighting" : "Walking") : "Following";
+        return new Status(true, state, name(followed), distance, next, done, running);
+    }
+
+    private static String name(Entity entity) {
+        String shown = ChatFormatting.stripFormatting(entity.getName().getString());
+        return shown == null || shown.isBlank() ? entity.getType().getDescription().getString() : shown;
+    }
+
     /** GUI toggle and hotkey. */
     public static void toggle() {
         PlayerSettings.combatEnabled = !PlayerSettings.combatEnabled;
         PlayerSettings.save();
+        if (PlayerSettings.combatEnabled) {
+            done = 0;
+            startedAt = System.currentTimeMillis();
+        }
         Minecraft client = Minecraft.getInstance();
         if (client.player != null) {
             String state = PlayerSettings.combatEnabled
@@ -154,6 +200,9 @@ public final class FollowFeature {
         if (!valid(followed, player)) {
             lost = followed;
             followed = null;
+            if (lost != null) {
+                done++;
+            }
             Entity next = pollQueue(player);
             if (next != null) {
                 // the next target was picked ahead of time: no search, no pause
