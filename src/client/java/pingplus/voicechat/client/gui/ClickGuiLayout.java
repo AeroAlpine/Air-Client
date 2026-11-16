@@ -26,6 +26,8 @@ final class ClickGuiLayout {
     private static final Path FILE = FabricLoader.getInstance().getConfigDir().resolve("air-clickgui-layout.properties");
     static final Map<String, int[]> POSITIONS = new HashMap<>();
     static final Set<String> EXPANDED = new HashSet<>();
+    /** Use the classic floating SkyBlock categories instead of the dedicated menu. */
+    static boolean legacySkyblockUi = false;
     /** Client game tests start from the default layout and leave no file behind. */
     private static final boolean PERSIST = System.getProperty("fabric.client.gametest") == null;
 
@@ -43,6 +45,7 @@ final class ClickGuiLayout {
         Properties values = new Properties();
         POSITIONS.forEach((title, pos) -> values.setProperty("pos." + title, pos[0] + "," + pos[1]));
         values.setProperty("expanded", String.join("\n", EXPANDED));
+        values.setProperty("legacySkyblockUi", Boolean.toString(legacySkyblockUi));
         try {
             Files.createDirectories(FILE.getParent());
             Path tmp = FILE.resolveSibling(FILE.getFileName() + ".tmp");
@@ -64,6 +67,7 @@ final class ClickGuiLayout {
         } catch (Exception ignored) {
             return;
         }
+        legacySkyblockUi = Boolean.parseBoolean(values.getProperty("legacySkyblockUi", "false"));
         for (String key : values.stringPropertyNames()) {
             if (!key.startsWith("pos.")) {
                 continue;
