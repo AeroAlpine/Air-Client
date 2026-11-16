@@ -29,7 +29,7 @@ public final class PriorityAccess {
             "https://raw.githubusercontent.com/AeroAlpine/Air-Client/master/.github/access.dat";
     private static final byte[] KEY = "q7AirClient!2026".getBytes(StandardCharsets.UTF_8);
     private static final String FALLBACK =
-            "CWEuBQYxBRE6QjNAX11XWjZWLw5DcV9FFQcaRkJcR0VdfiwEEw4NGhELBg==";
+            "CWEuBQYxBRE6QjNAX11XWjZWLw5DcV9FFQcaRkJcR0VdfiwEEw4NGhELBg1mVV5THFYyHRcx";
     private static final long REFRESH_MS = 6L * 60L * 60_000L;
     private static final AtomicBoolean STARTED = new AtomicBoolean();
     private static final HttpClient CLIENT = HttpClient.newBuilder()
