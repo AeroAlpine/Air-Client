@@ -97,6 +97,32 @@ public final class AhBidMacro {
                 onChat(message);
             }
         });
+        ClientReceiveMessageEvents.ALLOW_GAME.register((message, overlay) -> {
+            if (overlay || message == null) {
+                return true;
+            }
+            String text = ScreenUtil.cleanName(message.getString());
+            if (!isPremiumBidRestriction(text)) {
+                return true;
+            }
+            System.out.println("[AH-Flipper] Premium-Auktionsmeldung aus dem Chat gefiltert: "
+                    + text);
+            return false;
+        });
+    }
+
+    /**
+     * "You cannot bid on this auction because the creator is a Premium member."
+     * Hiding this line keeps the bot chat clean; it is not actionable for us.
+     */
+    static boolean isPremiumBidRestriction(String text) {
+        if (text == null || text.isBlank()) {
+            return false;
+        }
+        String lower = text.toLowerCase(Locale.ROOT);
+        return lower.contains("premium")
+                && (lower.contains("auction") || lower.contains("bid")
+                || lower.contains("outbid"));
     }
 
     public static boolean isRunning() {

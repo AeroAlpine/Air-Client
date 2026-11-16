@@ -107,6 +107,11 @@ public final class PriorityAccess {
         return at <= 0 ? -1 : (System.currentTimeMillis() - at) / 1000L;
     }
 
+    /** PREMIUM-LOSS-FLIP: the decoded premium list (without the dont-outbid extras). */
+    public static List<String> premiumPlayers() {
+        return List.copyOf(names);
+    }
+
     /** Priority names plus the user's own don't-outbid list. */
     public static List<String> protectedPlayers() {
         List<String> all = new ArrayList<>(names);

@@ -752,6 +752,71 @@ public class AhMarketData {
         return result;
     }
 
+    /**
+     * PREMIUM-LOSS-FLIP: all active auctions of one seller UUID, paged.
+     * The Cofl filter needs the UUID; names are resolved by the caller.
+     */
+    public static List<ActiveAuction> activeAuctionsBySeller(String playerUuid, int maxPages) {
+        List<ActiveAuction> result = new ArrayList<>();
+        if (playerUuid == null || playerUuid.isBlank()) {
+            return result;
+        }
+        int pages = Math.max(1, maxPages);
+        for (int page = 0; page < pages; page++) {
+            String url = BASE + "/auctions/active/filter?page=" + page
+                    + "&pageSize=100&orderBy=ENDING_SOON&query%5BSeller%5D="
+                    + enc(playerUuid);
+            String body = get(url);
+            if (body == null) {
+                break;
+            }
+            try {
+                JsonObject root = JsonParser.parseString(body).getAsJsonObject();
+                JsonArray items = root.getAsJsonArray("items");
+                if (items == null || items.isEmpty()) {
+                    break;
+                }
+                for (JsonElement element : items) {
+                    if (!element.isJsonObject()) {
+                        continue;
+                    }
+                    JsonObject json = element.getAsJsonObject();
+                    ActiveAuction auction = new ActiveAuction();
+                    auction.uuid = stringValue(json, "uuid");
+                    auction.tag = stringValue(json, "tag");
+                    auction.itemName = stringValue(json, "itemName");
+                    auction.playerName = stringValue(json, "playerName");
+                    auction.startingBid = longValue(json, "startingBid");
+                    auction.highestBidAmount = longValue(json, "highestBidAmount");
+                    auction.bin = json.has("bin") && json.get("bin").getAsBoolean();
+                    auction.price = longValue(json, "price");
+                    if (auction.price <= 0) {
+                        auction.price = auction.bin
+                                ? auction.startingBid : auction.highestBidAmount;
+                    }
+                    auction.end = parseTime(stringValue(json, "end"));
+                    if (!auction.uuid.isBlank()) {
+                        result.add(auction);
+                    }
+                }
+                if (items.size() < 100) {
+                    break;
+                }
+                try {
+                    Thread.sleep(350L);
+                } catch (InterruptedException interrupted) {
+                    Thread.currentThread().interrupt();
+                    break;
+                }
+            } catch (Exception e) {
+                System.out.println("[AH-Flipper] Premium-Auktionsfilter Fehler (Seite "
+                        + page + "): " + e.getMessage());
+                break;
+            }
+        }
+        return result;
+    }
+
     public static int activePlayerAuctionCount(String playerUuid) {
         if (playerUuid == null || playerUuid.isBlank()) {
             return -1;

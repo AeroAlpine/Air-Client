@@ -16,7 +16,10 @@ public abstract class KillAuraFrameMixin {
     private void voicechat$smoothAim(CallbackInfo ci) {
         Minecraft client = Minecraft.getInstance();
         if (com.coflnet.pathing.AotvAssist.isBusy()) {
-            return; // AOTV aims exactly; no smoothing may move the camera meanwhile
+            // AOTV turns the camera to the warp direction itself (smoothly); nothing else may
+            // move it meanwhile
+            com.coflnet.pathing.AotvAssist.frame(client);
+            return;
         }
         KillAuraFeature.frame(client);
         pingplus.voicechat.client.FollowFeature.frame(client);

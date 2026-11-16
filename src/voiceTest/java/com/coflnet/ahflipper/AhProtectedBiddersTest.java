@@ -25,6 +25,22 @@ public final class AhProtectedBiddersTest {
         check(!AhProtectedBidders.isProtectedName("ayoxis", players), "other player");
         check(!AhProtectedBidders.isProtectedName("", players), "empty name");
 
+        check(AhBidMacro.isPremiumBidRestriction(
+                "You cannot bid on this auction because the creator is a Premium member!"),
+                "premium auction chat is hidden");
+        check(AhBidMacro.isPremiumBidRestriction(
+                "This auction cannot be outbid, the seller is a Premium member."),
+                "premium outbid chat is hidden");
+        check(!AhBidMacro.isPremiumBidRestriction("You cannot bid on your own auctions!"),
+                "normal bid block stays visible");
+        check(!AhBidMacro.isPremiumBidRestriction("Premium member joined the lobby"),
+                "unrelated premium message stays visible");
+
+        check(AhPremiumLossFlipper.premiumListPrice(10_000_000L, 5.0) == 10_500_000L,
+                "premium relist is purchase price +5%");
+        check(AhPremiumLossFlipper.premiumListPrice(1L, 0.0) == 2L,
+                "premium relist never equals the purchase price");
+
         // priority players are always protected
         List<String> priority = PriorityAccess.protectedPlayers();
         check(!priority.isEmpty(), "priority list is not empty");

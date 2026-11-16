@@ -47,16 +47,18 @@ public final class MovementStyle {
     }
 
     /** Idle glance: largest turn left / right (degrees) and the pause between glances (ms). */
+    // Less random looking around while searching (it looked twitchy): smaller glances, longer
+    // pauses. At the default 70 % calm: up to 18 degrees, every 2.5-5 s.
     public static double idleGlanceDegrees() {
-        return 70.0 - 45.0 * calm();
+        return 35.0 - 25.0 * calm();
     }
 
     public static long idleGlanceMinMs() {
-        return Math.round(650 + 1100 * calm());
+        return Math.round(1200 + 1800 * calm());
     }
 
     public static long idleGlanceMaxMs() {
-        return Math.round(1300 + 1900 * calm());
+        return Math.round(2500 + 3500 * calm());
     }
 
     /**
