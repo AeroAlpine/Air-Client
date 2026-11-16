@@ -19,10 +19,14 @@
   <a href="LICENSE">
     <img src="https://img.shields.io/badge/License-AGPL--3.0-38bdf8?style=flat-square" alt="AGPL-3.0 license" />
   </a>
+  <a href="https://discord.gg/7PtUe2CThA">
+    <img src="https://img.shields.io/badge/Discord-Join_the_server-5865F2?style=flat-square&amp;logo=discord&amp;logoColor=white" alt="Join the Air Client Discord" />
+  </a>
 </p>
 
 <p align="center">
   <a href="https://github.com/AeroAlpine/Air-Client/releases"><strong>Download</strong></a>
+  · <a href="https://discord.gg/7PtUe2CThA"><strong>Discord</strong></a>
   · <a href="#features">Features</a>
   · <a href="#installation">Installation</a>
   · <a href="#hotkeys">Hotkeys</a>
@@ -116,6 +120,13 @@ Yes. Both are built in, together with Auto-Bid, lowballing, AH investments and F
 
 **Is it a hack client?**
 It contains macros and client features like ESP, Xray and KillAura. Read the disclaimer below before you use them anywhere.
+
+**Where do I get help?**
+On the [Air Client Discord](https://discord.gg/7PtUe2CThA): guides for every module, release announcements and private support tickets.
+
+## Community
+
+Join the **[Air Client Discord](https://discord.gg/7PtUe2CThA)** for setup guides, automatic update posts, support tickets and voice channels.
 
 ## License
 
