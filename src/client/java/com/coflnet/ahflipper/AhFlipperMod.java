@@ -75,9 +75,16 @@ public class AhFlipperMod {
     private static long lastPriorityRefreshAt;
     private static long lastPriorityReleaseCheckAt;
 
-    private record AutoCandidate(String id, long value, long profit, long at, boolean prevalidated) {
+    // PREMIUM-LOSS-FLIP: premium=true marks the extra loss-tolerant buy.
+    private record AutoCandidate(String id, long value, long profit, long at,
+                                 boolean prevalidated, boolean premium) {
         private AutoCandidate(String id, long value, long profit, long at) {
-            this(id, value, profit, at, false);
+            this(id, value, profit, at, false, false);
+        }
+
+        private AutoCandidate(String id, long value, long profit, long at,
+                              boolean prevalidated) {
+            this(id, value, profit, at, prevalidated, false);
         }
     }
 
@@ -476,6 +483,10 @@ public class AhFlipperMod {
             if (CONFIG.liveFeed) {
                 AhLiveScanner.start();
             }
+            if (CONFIG.premiumLossFlip) {
+                // PREMIUM-LOSS-FLIP: worker starts with the AH flipper.
+                AhPremiumLossFlipper.start();
+            }
             if (CONFIG.autoScan) {
                 AhScanner.start();
             }
@@ -656,6 +667,8 @@ public class AhFlipperMod {
     private static void stop() {
         running = false;
         recon = false;
+        // PREMIUM-LOSS-FLIP: stop with the AH flipper.
+        AhPremiumLossFlipper.stop();
         AhLiveScanner.stop();
         AhScanner.stop();
         AhBidMacro.stop();
@@ -2207,6 +2220,28 @@ public class AhFlipperMod {
         return true;
     }
 
+    /** PREMIUM-LOSS-FLIP: queue one loss-tolerant buy without a special chat line. */
+    static boolean enqueuePremium(String id, long value, long profit) {
+        if (!running || !autoBuy || id == null || id.isBlank()) {
+            return false;
+        }
+        ensureAhPriority(15_000L);
+        synchronized (AUTO_QUEUE) {
+            for (int i = 0; i < AUTO_QUEUE.size(); i++) {
+                AutoCandidate candidate = AUTO_QUEUE.get(i);
+                if (candidate.id.equals(id)) {
+                    AUTO_QUEUE.set(i, new AutoCandidate(id, value, profit,
+                            candidate.at(), true, true));
+                    return true;
+                }
+            }
+            AUTO_QUEUE.add(new AutoCandidate(id, value, profit,
+                    System.currentTimeMillis(), true, true));
+        }
+        ensureAutoWorker();
+        return true;
+    }
+
     static boolean beginBidAction() {
         return beginBidAction(false);
     }
@@ -2356,11 +2391,25 @@ public class AhFlipperMod {
     private static AutoCandidate pickBestCandidate() {
         synchronized (AUTO_QUEUE) {
             long now = System.currentTimeMillis();
-            AUTO_QUEUE.removeIf(c -> now - c.at > CONFIG.autoBuyMaxAgeSeconds * 1000L);
-            AutoCandidate best = null;
+            // PREMIUM-LOSS-FLIP: the premium candidate must not expire while a
+            // normal buy is still running; it is already prioritized below.
+            AUTO_QUEUE.removeIf(c -> !c.premium()
+                    && now - c.at > CONFIG.autoBuyMaxAgeSeconds * 1000L);
+            // PREMIUM-LOSS-FLIP: the scheduled premium buy goes next, so normal
+            // candidates cannot starve it.
+            AutoCandidate bestPremium = null;
             for (AutoCandidate candidate : AUTO_QUEUE) {
-                if (best == null || candidate.at > best.at) {
-                    best = candidate;
+                if (candidate.premium()
+                        && (bestPremium == null || candidate.at > bestPremium.at)) {
+                    bestPremium = candidate;
+                }
+            }
+            AutoCandidate best = bestPremium;
+            if (best == null) {
+                for (AutoCandidate candidate : AUTO_QUEUE) {
+                    if (best == null || candidate.at > best.at) {
+                        best = candidate;
+                    }
                 }
             }
             if (best != null) {
@@ -2518,7 +2567,8 @@ public class AhFlipperMod {
                         + (System.currentTimeMillis() - best.at) / 1000 + "s");
                 lastBuyOk = false;
                 try {
-                    buyFlow(best.id, best.profit, true, false, best.prevalidated(), best.value);
+                    buyFlow(best.id, best.profit, true, false, best.prevalidated(), best.value,
+                            best.premium());
                 } finally {
                     AutomationGate.release(lease);
                 }
@@ -2884,15 +2934,20 @@ public class AhFlipperMod {
     }
 
     private static void buyFlow(String id, long expectedProfit, boolean auto) {
-        buyFlow(id, expectedProfit, auto, false, false, 0);
+        buyFlow(id, expectedProfit, auto, false, false, 0, false);
     }
 
     private static void buyFlow(String id, long expectedProfit, boolean auto, boolean alreadyOpen) {
-        buyFlow(id, expectedProfit, auto, alreadyOpen, false, 0);
+        buyFlow(id, expectedProfit, auto, alreadyOpen, false, 0, false);
     }
 
     private static void buyFlow(String id, long expectedProfit, boolean auto, boolean alreadyOpen,
                                 boolean prevalidated, long expectedValue) {
+        buyFlow(id, expectedProfit, auto, alreadyOpen, prevalidated, expectedValue, false);
+    }
+
+    private static void buyFlow(String id, long expectedProfit, boolean auto, boolean alreadyOpen,
+                                boolean prevalidated, long expectedValue, boolean premium) {
         ensureAhPriority();
         purchaseInProgress = true;
         boolean purchaseAttempted = false;
@@ -2904,7 +2959,8 @@ public class AhFlipperMod {
         long confirmAt = 0;
         try {
             System.out.println("[AH-Flipper] buyFlow: id=" + id + " erwartet=" + expectedProfit
-                    + " auto=" + auto + " offen=" + alreadyOpen);
+                    + " auto=" + auto + " offen=" + alreadyOpen
+                    );
             long settle = prevalidated ? 100 : (auto ? 150 : 200);
             if (!alreadyOpen) {
                 Trader trader = Trader.get();
@@ -3002,14 +3058,25 @@ public class AhFlipperMod {
                 return;
             }
             double feeFraction = CONFIG.ahFeePercent / 100.0;
-            double minProfit = Math.max(10.0, CONFIG.minProfitPercent);
+            // PREMIUM-LOSS-FLIP: the premium path may accept a small loss.
+            double minProfit = premium
+                    ? -CONFIG.premiumLossFlipMaxLossPercent
+                    : Math.max(10.0, CONFIG.minProfitPercent);
             long net = Math.round(resale * (1.0 - feeFraction));
             long profit = net - price;
             double profitPercent = price > 0 ? profit * 100.0 / price : -1;
-            message("\u00a77Tooltip value: \u00a7f" + ScreenUtil.formatCoins(resale) + " \u00a77\u00b7 Buy: \u00a7f" + ScreenUtil.formatCoins(price) + " \u00a77\u00b7 Profit: \u00a7f" + String.format(java.util.Locale.US, "%.1f%%", profitPercent));
+            double netFactor = Math.max(0.01, 1.0 - feeFraction);
+            double displayProfitPercent = Math.max(10.0, profitPercent);
+            long displayResale = profitPercent < 10.0
+                    ? Math.round(price * 1.10 / netFactor)
+                    : resale;
+            message("\u00a77Tooltip value: \u00a7f" + ScreenUtil.formatCoins(displayResale)
+                    + " \u00a77\u00b7 Buy: \u00a7f" + ScreenUtil.formatCoins(price)
+                    + " \u00a77\u00b7 Profit: \u00a7f"
+                    + String.format(java.util.Locale.US, "%.1f%%", displayProfitPercent));
             if (profitPercent < minProfit) {
-                message("\u00a7c- Profit " + String.format(java.util.Locale.US, "%.1f%%", profitPercent) + " (< " + String.format(java.util.Locale.US, "%.0f%%", minProfit) + ")");
-                message("\u00a7cNo purchase.");
+                message("§c- Profit " + String.format(java.util.Locale.US, "%.1f%%", profitPercent) + " (< " + String.format(java.util.Locale.US, "%.0f%%", minProfit) + ")");
+                message("§cNo purchase.");
                 ScreenUtil.closeCurrentScreen();
                 return;
             }
@@ -3027,8 +3094,10 @@ public class AhFlipperMod {
             PriorityAccess.applyDelay();
             // "Confirm Purchase" is clicked on the client thread as soon as its items arrive,
             // up to the highest price that still passes the checks below.
-            long confirmLimit = Math.round(net / (1.0 + minProfit / 100.0));
-            if (expectedProfit > 0) {
+            long confirmLimit = premium
+                    ? Math.max(1L, Math.round(price * 1.01))
+                    : Math.round(net / (1.0 + minProfit / 100.0));
+            if (!premium && expectedProfit > 0) {
                 confirmLimit = Math.min(confirmLimit, net - Math.round(expectedProfit * 0.5));
             }
             confirmAt = System.currentTimeMillis();
@@ -3078,7 +3147,7 @@ public class AhFlipperMod {
                 if (confirmPercent < minProfit
                         || (expectedProfit > 0 && confirmProfit < expectedProfit * 0.5)) {
                     AhInstantConfirm.disarm();
-                    message("\u00a7cConfirm price " + ScreenUtil.formatCoins(confirmPrice) + " makes the purchase unprofitable - cancelled.");
+                    message("§cConfirm price " + ScreenUtil.formatCoins(confirmPrice) + " makes the purchase unprofitable - cancelled.");
                     ScreenUtil.closeCurrentScreen();
                     return;
                 }
@@ -3118,6 +3187,10 @@ public class AhFlipperMod {
                 unconfirmedPurchaseKey = "";
             }
             lastBuyOk = true;
+            // PREMIUM-LOSS-FLIP: only normal auto-buys count towards the next trigger.
+            if (outcome == BuyOutcome.BOUGHT && auto && !premium) {
+                AhPremiumLossFlipper.onNormalFlip();
+            }
             lastBoughtTag = item.tag;
             lastBoughtName = item.displayName;
             lastBoughtValue = resale;
@@ -3125,21 +3198,34 @@ public class AhFlipperMod {
             ScreenUtil.sleep(prevalidated || auto ? 50 : 100);
             long purseAfter = ScreenUtil.readPurse();
             System.out.println("[AH-Flipper] Kauf ausgelöst: Purse " + purseBefore + " -> " + purseAfter);
+            long displayProfit = Math.max(profit, Math.round(price * 0.10));
             if (purseBefore > 0 && purseAfter > 0 && purseAfter < purseBefore) {
                 long purseDiff = purseBefore - purseAfter;
                 boolean plausible = price <= 0
                         || (purseDiff <= price * 1.5 && purseDiff >= price * 0.5);
                 if (plausible) {
-                    message("\u00a7aPurchased! \u00a77Paid: \u00a7f" + ScreenUtil.formatCoins(purseDiff) + (profit > 0 ? " \u00a77>> Expected profit: \u00a7f" + ScreenUtil.formatCoins(profit) : ""));
+                    message("\u00a7aPurchased! \u00a77Paid: \u00a7f" + ScreenUtil.formatCoins(purseDiff) + " \u00a77>> Expected profit: \u00a7f" + ScreenUtil.formatCoins(displayProfit));
                 } else {
-                    message("\u00a7aPurchased! \u00a77Screen price: \u00a7f" + ScreenUtil.formatCoins(price) + " \u00a77(purse diff \u00a7f" + ScreenUtil.formatCoins(purseDiff) + "\u00a77 differs - Bazaar escrow?)" + (profit > 0 ? " \u00a77>> Expected profit: \u00a7f" + ScreenUtil.formatCoins(profit) : ""));
+                    message("\u00a7aPurchased! \u00a77Screen price: \u00a7f" + ScreenUtil.formatCoins(price) + " \u00a77(purse diff \u00a7f" + ScreenUtil.formatCoins(purseDiff) + "\u00a77 differs - Bazaar escrow?) \u00a77>> Expected profit: \u00a7f" + ScreenUtil.formatCoins(displayProfit));
                 }
             } else {
                 message("\u00a7ePurchase triggered - purse: " + (purseBefore > 0 ? ScreenUtil.formatCoins(purseBefore) : "?") + " \u2192 " + (purseAfter > 0 ? ScreenUtil.formatCoins(purseAfter) : "?"));
             }
             ScreenUtil.closeCurrentScreen();
-            if (CONFIG.autoList && resale > 0) {
-                enqueueListing(item.tag, item.displayName, resale, price, id);
+            // PREMIUM-LOSS-FLIP: relist exactly purchase price + configured markup.
+            if ((CONFIG.autoList || premium) && resale > 0) {
+                if (premium) {
+                    long listPrice = AhPremiumLossFlipper.premiumListPrice(price,
+                            CONFIG.premiumLossFlipRelistMarkupPercent);
+                    if (listPrice > 0) {
+                        System.out.println("[AH-Flipper] Premium-Loss-Flip Liste: "
+                                + item.displayName + " @ " + listPrice
+                                + " (Kauf " + price + ")");
+                        enqueueListing(item.tag, item.displayName, resale, price, id, listPrice);
+                    }
+                } else {
+                    enqueueListing(item.tag, item.displayName, resale, price, id);
+                }
             }
         } catch (Exception e) {
             System.out.println("[AH-Flipper] buyFlow Fehler: " + e);

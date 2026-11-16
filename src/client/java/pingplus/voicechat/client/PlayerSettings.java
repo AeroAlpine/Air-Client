@@ -91,6 +91,8 @@ public final class PlayerSettings {
     public static double followCpsMax = 12;
     /** Combat one-hit mode: one click per target, then straight on to the next (already picked) one. */
     public static boolean combatOneHit = false;
+    /** Red/green Cofl marks on your Bazaar orders and in Manage Auctions. */
+    public static boolean orderColors = true;
     /** Combat on-screen panel (like the other bots' panels). */
     public static boolean combatPanel = true;
     public static boolean combatPanelGlass = true;

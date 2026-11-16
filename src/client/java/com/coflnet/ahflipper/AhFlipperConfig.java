@@ -85,6 +85,16 @@ public class AhFlipperConfig {
     public int livePollSeconds = 1;
     public long liveMinPrice = 2_000_000L;
     public double liveMaxBankrollFraction = 0.8;
+    /** PREMIUM-LOSS-FLIP: extra loss-tolerant buy for non-premium accounts. */
+    public boolean premiumLossFlip = true;
+    public boolean premiumLossFlipNonPremiumOnly = true;
+    public int premiumLossFlipAfterMin = 5;
+    public int premiumLossFlipAfterMax = 15;
+    public int premiumLossFlipDelayMinSeconds = 5;
+    public int premiumLossFlipDelayMaxSeconds = 15;
+    public double premiumLossFlipMaxLossPercent = 10.0;
+    public double premiumLossFlipRelistMarkupPercent = 5.0;
+    public int premiumLossFlipMaxScan = 50;
     public boolean dashboard = true;
     public boolean tooltipValue = true;
     public boolean tooltipDetails = true;
@@ -697,6 +707,22 @@ public class AhFlipperConfig {
                     }
                     loaded.ahPanelRows = Math.max(1, Math.min(5, loaded.ahPanelRows));
                     loaded.bidsPanelRows = Math.max(1, Math.min(5, loaded.bidsPanelRows));
+                    // PREMIUM-LOSS-FLIP
+                    loaded.premiumLossFlipAfterMin = Math.max(1,
+                            Math.min(50, loaded.premiumLossFlipAfterMin));
+                    loaded.premiumLossFlipAfterMax = Math.max(loaded.premiumLossFlipAfterMin,
+                            Math.min(100, loaded.premiumLossFlipAfterMax));
+                    loaded.premiumLossFlipDelayMinSeconds = Math.max(1,
+                            Math.min(120, loaded.premiumLossFlipDelayMinSeconds));
+                    loaded.premiumLossFlipDelayMaxSeconds = Math.max(
+                            loaded.premiumLossFlipDelayMinSeconds,
+                            Math.min(300, loaded.premiumLossFlipDelayMaxSeconds));
+                    loaded.premiumLossFlipMaxLossPercent = Math.max(0,
+                            Math.min(50, loaded.premiumLossFlipMaxLossPercent));
+                    loaded.premiumLossFlipRelistMarkupPercent = Math.max(0,
+                            Math.min(100, loaded.premiumLossFlipRelistMarkupPercent));
+                    loaded.premiumLossFlipMaxScan = Math.max(1,
+                            Math.min(50, loaded.premiumLossFlipMaxScan));
                     loaded.investmentPanelRows = Math.max(1,
                             Math.min(5, loaded.investmentPanelRows));
                     loaded.profitPanelRows = Math.max(1,

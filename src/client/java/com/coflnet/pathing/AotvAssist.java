@@ -160,7 +160,8 @@ public final class AotvAssist {
         if (mode == Mode.TELEPORT || mode == Mode.BOTH) {
             int slot = hotbarSlot(player, false);
             if (slot >= 0) {
-                tele = teleportPlan(level, player, positions, from, config, slot);
+                int reach = teleportBlocks(player.getInventory().getItem(slot), config.aotvTeleportBlocks);
+                tele = teleportPlan(level, player, positions, from, config, slot, reach);
             }
         }
         if (ether == null) {
@@ -195,8 +196,7 @@ public final class AotvAssist {
 
     /** Straight, level and free part of the path about one teleport long. */
     private static Plan teleportPlan(Level level, LocalPlayer player, List<BetterBlockPos> positions,
-                                     int from, PathfinderConfig config, int slot) {
-        double reach = config.aotvTeleportBlocks;
+                                     int from, PathfinderConfig config, int slot, double reach) {
         int feetY = player.blockPosition().getY();
         Vec3 start = player.position();
         for (int j = from + 1; j < positions.size(); j++) {
@@ -220,10 +220,13 @@ public final class AotvAssist {
                     return null;
                 }
             }
-            if (!lineFree(level, start, dx / dist, dz / dist, dist, feetY)) {
+            // Hypixel teleports exactly "reach" blocks along the look direction and refuses
+            // ("There are blocks in the way!") if anything solid is on the way: check that line.
+            double ux = dx / dist, uz = dz / dist;
+            if (!lineFree(level, start, ux, uz, reach + 0.5, feetY)) {
                 return null;
             }
-            BlockPos landing = BlockPos.containing(start.x + dx, feetY, start.z + dz);
+            BlockPos landing = BlockPos.containing(start.x + ux * reach, feetY, start.z + uz * reach);
             if (level.getBlockState(landing.below()).getCollisionShape(level, landing.below()).isEmpty()) {
                 return null; // nothing to stand on after the teleport
             }
@@ -237,19 +240,50 @@ public final class AotvAssist {
         return Math.abs(x * uz - z * ux);
     }
 
-    /** Feet and head blocks along the teleport line have no collision. */
+    /**
+     * Feet and head blocks along the teleport line are free. Only air and blocks you walk
+     * through and can build over (grass, snow layers ...) count as free: signs, flowers,
+     * buttons or carpets stop Hypixel's teleport even though they have no collision.
+     */
     private static boolean lineFree(Level level, Vec3 start, double ux, double uz, double dist, int feetY) {
-        for (double t = 0.5; t <= dist + 0.5; t += 0.5) {
+        for (double t = 0.25; t <= dist; t += 0.25) {
             int x = (int) Math.floor(start.x + ux * t);
             int z = (int) Math.floor(start.z + uz * t);
             for (int dy = 0; dy <= 1; dy++) {
                 BlockPos pos = new BlockPos(x, feetY + dy, z);
-                if (!level.getBlockState(pos).getCollisionShape(level, pos).isEmpty()) {
+                var state = level.getBlockState(pos);
+                boolean free = state.isAir()
+                        || (state.canBeReplaced() && state.getCollisionShape(level, pos).isEmpty()
+                        && state.getFluidState().isEmpty());
+                if (!free) {
                     return false;
                 }
             }
         }
         return true;
+    }
+
+    private static final java.util.regex.Pattern TELEPORT_BLOCKS =
+            java.util.regex.Pattern.compile("(?i)teleport\\s+(\\d+)\\s+blocks");
+
+    /** "Teleport 12 blocks ahead" from the item's lore (Transmission Tuners change it). */
+    static int teleportBlocks(ItemStack stack, int fallback) {
+        try {
+            var lore = stack.get(DataComponents.LORE);
+            if (lore != null) {
+                for (var line : lore.lines()) {
+                    java.util.regex.Matcher m = TELEPORT_BLOCKS.matcher(line.getString());
+                    if (m.find()) {
+                        int blocks = Integer.parseInt(m.group(1));
+                        if (blocks >= 4 && blocks <= 30) {
+                            return blocks;
+                        }
+                    }
+                }
+            }
+        } catch (RuntimeException ignored) {
+        }
+        return fallback;
     }
 
     private static void runStep(Minecraft client, LocalPlayer player, IBaritone baritone) {
@@ -270,13 +304,19 @@ public final class AotvAssist {
                 }
             }
             case AIM -> {
-                aim(player);
-                if (stepTicks >= 2) {
+                // The camera turns smoothly in frame() (like KillAura). Warp once it has been
+                // on target for a few ticks, so the server has the exact direction too.
+                if (aimError(player) < 1.5f) {
+                    alignedTicks++;
+                } else {
+                    alignedTicks = 0;
+                }
+                if (alignedTicks >= 3 || stepTicks >= 40) {
                     next(Step.USE);
                 }
             }
             case USE -> {
-                aim(player);
+                aim(player); // only the last fraction of a degree
                 startPos = player.position();
                 client.gameMode.useItem(player, InteractionHand.MAIN_HAND);
                 next(Step.WAIT);
@@ -292,6 +332,31 @@ public final class AotvAssist {
         }
     }
 
+    private static int alignedTicks;
+    private static long lastFrameNanos;
+
+    private static float aimError(LocalPlayer player) {
+        return Math.max(Math.abs(net.minecraft.util.Mth.wrapDegrees(plan.yaw() - player.getYRot())),
+                Math.abs(plan.pitch() - player.getXRot()));
+    }
+
+    /** Every frame while aiming: turn the camera smoothly towards the warp direction. */
+    public static void frame(Minecraft client) {
+        long now = System.nanoTime();
+        double dt = lastFrameNanos == 0 ? 0 : Math.min(0.05, (now - lastFrameNanos) / 1e9);
+        lastFrameNanos = now;
+        LocalPlayer player = client.player;
+        if (player == null || plan == null || (step != Step.AIM && step != Step.PREPARE)) {
+            return;
+        }
+        float speed = Math.clamp(pingplus.voicechat.client.PlayerSettings.combatRotationSpeed, 180f, 720f);
+        float yaw = pingplus.voicechat.client.AimSmoothing.step(player.getYRot(), plan.yaw(), speed, dt, 12.0);
+        float pitch = pingplus.voicechat.client.AimSmoothing.step(player.getXRot(), plan.pitch(), speed, dt, 12.0);
+        player.setYRot(yaw);
+        player.setXRot(pitch);
+        player.setYHeadRot(yaw);
+    }
+
     private static void aim(LocalPlayer player) {
         player.setYRot(plan.yaw());
         player.setXRot(plan.pitch());
@@ -301,6 +366,7 @@ public final class AotvAssist {
     private static void next(Step nextStep) {
         step = nextStep;
         stepTicks = 0;
+        alignedTicks = 0;
     }
 
     private static void finish(Minecraft client, LocalPlayer player, IBaritone baritone, boolean success) {

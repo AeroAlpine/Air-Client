@@ -273,6 +273,9 @@ final class SkyblockModules {
                         () -> PlayerSettings.mobHealthBar, () -> PlayerSettings.mobHealthBar = !PlayerSettings.mobHealthBar)
                 .slider("Health bar opacity", "How see-through the mob health bars are.", 0, 100, 5, "%",
                         () -> PlayerSettings.mobBarOpacity * 100.0, v -> PlayerSettings.mobBarOpacity = (float) (v / 100.0))
+                .toggle("Order & auction colors", "Your Bazaar orders: red = outbid, green = still the best price. "
+                                + "Manage Auctions: red = no longer the lowest BIN, green = still lowest BIN.",
+                        () -> PlayerSettings.orderColors, () -> PlayerSettings.orderColors = !PlayerSettings.orderColors)
                 .group("Outlines")
                 .toggle("Self glow", "Outline around your own player in third person.",
                         () -> PlayerSettings.selfOutline, () -> PlayerSettings.selfOutline = !PlayerSettings.selfOutline)

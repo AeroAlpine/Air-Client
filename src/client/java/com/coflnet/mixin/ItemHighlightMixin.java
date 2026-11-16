@@ -55,6 +55,14 @@ public abstract class ItemHighlightMixin {
         }
     }
 
+    private static boolean orderColorScreen(AbstractContainerScreen<?> screen) {
+        if (!pingplus.voicechat.client.PlayerSettings.orderColors || screen.getTitle() == null) {
+            return false;
+        }
+        String title = screen.getTitle().getString().toLowerCase(java.util.Locale.ROOT);
+        return title.contains("bazaar orders") || title.contains("manage auctions");
+    }
+
     @Inject(method = "extractSlots", at = @At("HEAD"))
     private void yourmodid_onDrawBackground(GuiGraphicsExtractor context, int mouseX, int mouseY, CallbackInfo ci) {
         try {
@@ -80,8 +88,10 @@ public abstract class ItemHighlightMixin {
                     }
                 }
             }
-            // Cofl's coloured slot highlights are not drawn any more.
-            for (Slot slot : java.util.List.<Slot>of()) {
+            // Cofl's coloured slot highlights only where they are wanted: your Bazaar orders
+            // (red = outbid, green = still the best price) and Manage Auctions (red = no longer
+            // the lowest BIN, green = still lowest BIN). Everywhere else they stay off.
+            for (Slot slot : orderColorScreen(screen) ? screen.getMenu().slots : java.util.List.<Slot>of()) {
                 if (!slot.hasItem())
                     continue;
                 DescriptionHandler.DescModification[] tooltips = DescriptionHandler.getTooltipData(CoflModClient.getIdFromStack(slot.getItem()));

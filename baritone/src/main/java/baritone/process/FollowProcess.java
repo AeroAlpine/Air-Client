@@ -56,7 +56,7 @@ public final class FollowProcess extends BaritoneProcessHelper implements IFollo
      */
     private final Map<Entity, BlockPos> anchors = new HashMap<>();
     private static final double REANCHOR_DIST_SQ = 4.0;
-    private static final long REANCHOR_MIN_MS = 250L;
+    private static final long REANCHOR_MIN_MS = 400L;
     private long lastReanchorAt;
 
     public FollowProcess(Baritone baritone) {
@@ -83,7 +83,17 @@ public final class FollowProcess extends BaritoneProcessHelper implements IFollo
         }
         BlockPos anchor = anchors.get(following);
         long now = System.currentTimeMillis();
-        if (anchor == null || (anchor.distSqr(pos) >= REANCHOR_DIST_SQ && canReplanNow()
+        double radius = Baritone.settings().followRadius.value;
+        double playerDistSq = ctx.player() == null ? Double.MAX_VALUE : ctx.player().distanceToSqr(following);
+        boolean close = playerDistSq <= (radius + 1.5) * (radius + 1.5);
+        // A far target only moves the goal when it went a good part of the way; a close one
+        // always keeps the goal on itself. (A stale goal next to a walking mob made the bot walk
+        // to where the mob was, away from it, and back: circles.)
+        double threshold = Math.max(REANCHOR_DIST_SQ, playerDistSq * 0.05);
+        if (anchor == null
+                || (close && anchor.distSqr(pos) >= 2.0 && canReplanNow()
+                && now - lastReanchorAt >= 250L)
+                || (!close && anchor.distSqr(pos) >= threshold && canReplanNow()
                 && now - lastReanchorAt >= REANCHOR_MIN_MS)) {
             anchor = pos.immutable();
             anchors.put(following, anchor);
