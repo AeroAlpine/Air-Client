@@ -691,6 +691,30 @@ public interface MovementHelper extends ActionCosts, Helper {
         return rise > ctx.player().maxUpStep() + 1.0E-3;
     }
 
+    /**
+     * Air Client: the floors of {@code src} and {@code dest} are at most 0.6 blocks apart (stairs,
+     * half slabs): a slope the player walks without jumping or falling - as if the path line ran
+     * 0.6 above the ground.
+     */
+    static boolean isRamp(IPlayerContext ctx, BlockPos src, BlockPos dest) {
+        if (Math.abs(floorHeight(ctx, dest) - floorHeight(ctx, src)) <= 0.6 + 1.0E-3) {
+            return true; // half slabs, carpets ...
+        }
+        // A stair's box is always a full block high (its back half), but along its direction a
+        // one block difference is two half steps: down from a stair whose low side faces the
+        // way we go, up onto one whose low side faces us.
+        int dx = dest.getX() - src.getX();
+        int dz = dest.getZ() - src.getZ();
+        int dy = dest.getY() - src.getY();
+        if (dy == -1) {
+            return isStairStepUp(BlockStateInterface.get(ctx, src.below()), -dx, -dz);
+        }
+        if (dy == 1) {
+            return isStairStepUp(BlockStateInterface.get(ctx, dest.below()), dx, dz);
+        }
+        return false;
+    }
+
     /** Height of the surface the player stands on with feet in {@code feet}. */
     static double floorHeight(IPlayerContext ctx, BlockPos feet) {
         BlockState at = ctx.world().getBlockState(feet);

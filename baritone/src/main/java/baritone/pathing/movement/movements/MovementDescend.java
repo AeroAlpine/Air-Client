@@ -230,6 +230,21 @@ public class MovementDescend extends Movement {
             return state;
         }
 
+        if (MovementHelper.isRamp(ctx, src, dest)) {
+            // Air Client: stairs / half slabs down. The floors differ by at most a half block, so
+            // this is a slope, not a drop: walk (and sprint) through like on flat ground instead
+            // of aiming past the block and waiting for a landing on every single step.
+            double flatX = ctx.player().position().x - (dest.getX() + 0.5);
+            double flatZ = ctx.player().position().z - (dest.getZ() + 0.5);
+            boolean over = Math.abs(flatX) < 0.5 && Math.abs(flatZ) < 0.5;
+            if (over && ctx.player().onGround()
+                    && Math.abs(ctx.player().position().y - MovementHelper.floorHeight(ctx, dest)) < 0.6) {
+                return state.setStatus(MovementStatus.SUCCESS);
+            }
+            MovementHelper.moveTowards(ctx, state, dest);
+            state.setInput(Input.SPRINT, true);
+            return state;
+        }
         BlockPos playerFeet = ctx.playerFeet();
         BlockPos fakeDest = new BlockPos(dest.getX() * 2 - src.getX(), dest.getY(), dest.getZ() * 2 - src.getZ());
         if ((playerFeet.equals(dest) || playerFeet.equals(fakeDest)) && (MovementHelper.isLiquid(ctx, dest) || ctx.player().position().y - dest.getY() < 0.5)) { // lilypads

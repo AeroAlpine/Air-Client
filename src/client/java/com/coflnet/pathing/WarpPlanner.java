@@ -45,7 +45,10 @@ public final class WarpPlanner {
      * while turning), {@code landing} where the feet should end up, {@code jumpFirst} for a
      * teleport from the top of a jump.
      */
-    public record Hop(Kind kind, Vec3 aim, Vec3 landing, boolean jumpFirst) {
+    // Teleports aim in a fixed direction (dir): what matters is the direction, and a point to
+    // look at shifts while the player walks on or falls - the camera chased it. Etherwarps aim
+    // at their block (dir null).
+    public record Hop(Kind kind, Vec3 aim, Vec3 landing, boolean jumpFirst, Vec3 dir) {
     }
 
     /** A route of one or more hops and what it costs compared to walking. */
@@ -94,6 +97,8 @@ public final class WarpPlanner {
          * 0 on the ground. A teleport in the air saves them.
          */
         public double airTicksLeft;
+        /** Walking counts this much more expensive on a hard path (1 = normal). */
+        public double walkRisk = 1.0;
 
         /** Straight-line estimate from where we stand (vanilla ticks); set by {@link #prepare}. */
         double startEstimate;
@@ -179,7 +184,7 @@ public final class WarpPlanner {
 
     /** Walking now in real ticks: the rest of the path, plus the air time of a running jump. */
     private static double walkNow(Context c) {
-        return c.baselineVanilla * c.speedFactor + c.airTicksLeft;
+        return c.baselineVanilla * c.speedFactor * c.walkRisk + c.airTicksLeft;
     }
 
     private WarpPlanner() {
@@ -201,7 +206,16 @@ public final class WarpPlanner {
         List<Draft> drafts = new ArrayList<>();
         Vec3 startLook = Vec3.directionFromRotation(c.pitch, c.yaw);
         List<Node> frontier = List.of(new Node(null, c.eye, startLook, 0, List.of()));
-        for (int depth = 1; depth <= Math.max(1, Math.min(3, c.maxChain)); depth++) {
+        int maxDepth = Math.max(1, Math.min(20, c.maxChain));
+        Set<BlockPos> known = new HashSet<>(candidates);
+        double bestEstimate = Double.MAX_VALUE;
+        for (int depth = 1; depth <= maxDepth; depth++) {
+            if (depth >= 2) {
+                // long chains need new spots: what can be seen from the best spot reached so far
+                List<BlockPos> more = new ArrayList<>(candidates);
+                fanCandidates(c, frontier.get(0).eye(), known, more);
+                candidates = more.size() > MAX_CANDIDATES + 40 ? more.subList(0, MAX_CANDIDATES + 40) : more;
+            }
             List<Node> next = new ArrayList<>();
             for (Node from : frontier) {
                 for (BlockPos target : candidates) {
@@ -218,16 +232,24 @@ public final class WarpPlanner {
                             + c.etherwarpExtraTicks;
                     Vec3 landing = new Vec3(target.getX() + 0.5, target.getY() + 1.0, target.getZ() + 0.5);
                     List<Hop> hops = new ArrayList<>(from.hops());
-                    hops.add(new Hop(Kind.ETHERWARP, aim, landing, false));
+                    hops.add(new Hop(Kind.ETHERWARP, aim, landing, false, null));
                     // a route has to end clearly closer; a hop that does not (out of a cave,
                     // up onto a roof) may still lead to a better second hop
                     if (progresses(c, target.above())) {
-                        drafts.add(new Draft(List.copyOf(hops), g, target.above(), g + walkAfter(c, target.above())));
+                        double estimate = g + walkAfter(c, target.above());
+                        drafts.add(new Draft(List.copyOf(hops), g, target.above(), estimate));
+                        bestEstimate = Math.min(bestEstimate, estimate);
                     }
                     next.add(new Node(target, landing.add(0, EYE, 0), dir, g, hops));
                 }
             }
-            if (depth >= c.maxChain || next.isEmpty()) {
+            if (depth >= maxDepth || next.isEmpty()) {
+                break;
+            }
+            // one more warp costs at least its handling and mana: once the best route found is
+            // cheaper than that from every node, no longer chain can win - stop searching
+            double cheapestNode = next.stream().mapToDouble(Node::g).min().orElse(Double.MAX_VALUE);
+            if (bestEstimate <= cheapestNode + ETHER_HANDLING_TICKS + c.etherwarpExtraTicks) {
                 break;
             }
             // expand only the most promising nodes (cheapest so far + what is left to walk)
@@ -271,31 +293,37 @@ public final class WarpPlanner {
                 out.add(below);
             }
         }
-        Vec3 toGoal = null;
-        for (BlockPos center : goalCenters(c.goal)) {
-            toGoal = Vec3.atCenterOf(center).subtract(c.eye);
-            break;
-        }
-        if (toGoal != null && toGoal.lengthSqr() > 1.0E-6) {
-            float baseYaw = (float) (Math.toDegrees(Math.atan2(toGoal.z, toGoal.x)) - 90.0);
-            for (int yawOff = -60; yawOff <= 60; yawOff += 15) {
-                for (int pitch = -70; pitch <= 50; pitch += 15) {
-                    Vec3 dir = Vec3.directionFromRotation(pitch, baseYaw + yawOff);
-                    EtherwarpHelper.raycast(c.level, c.eye, dir, EtherwarpHelper.MAX_RANGE).ifPresent(hit -> {
-                        BlockPos pos = hit.pos();
-                        if (seen.add(pos) && validTarget(c.level, pos)) {
-                            out.add(pos);
-                        }
-                    });
-                }
-            }
-        }
+        fanCandidates(c, c.eye, seen, out);
         // keep the planning cheap: the candidates closest (in walking) to the goal
         if (out.size() > MAX_CANDIDATES) {
             out.sort(Comparator.comparingDouble(p -> walkTicks(c, p.above())));
             return new ArrayList<>(out.subList(0, MAX_CANDIDATES));
         }
         return out;
+    }
+
+    /** What a fan of etherwarp rays from {@code eye} towards the goal hits (valid spots only). */
+    private static void fanCandidates(Context c, Vec3 eye, Set<BlockPos> seen, List<BlockPos> out) {
+        Vec3 toGoal = null;
+        for (BlockPos center : goalCenters(c.goal)) {
+            toGoal = Vec3.atCenterOf(center).subtract(eye);
+            break;
+        }
+        if (toGoal == null || toGoal.lengthSqr() < 1.0E-6) {
+            return;
+        }
+        float baseYaw = (float) (Math.toDegrees(Math.atan2(toGoal.z, toGoal.x)) - 90.0);
+        for (int yawOff = -60; yawOff <= 60; yawOff += 15) {
+            for (int pitch = -70; pitch <= 50; pitch += 15) {
+                Vec3 dir = Vec3.directionFromRotation(pitch, baseYaw + yawOff);
+                EtherwarpHelper.raycast(c.level, eye, dir, EtherwarpHelper.MAX_RANGE).ifPresent(hit -> {
+                    BlockPos pos = hit.pos();
+                    if (seen.add(pos) && validTarget(c.level, pos)) {
+                        out.add(pos);
+                    }
+                });
+            }
+        }
     }
 
     private static boolean validTarget(Level level, BlockPos pos) {
@@ -363,7 +391,7 @@ public final class WarpPlanner {
                     double warp = TELEPORT_HANDLING_TICKS + turnTicks(c, look, dir) + c.teleportExtraTicks
                             + jumpTicks + fallTicks(landed.y - ground.y);
                     Vec3 aimPoint = eye.add(dir.scale(c.teleportReach));
-                    drafts.add(new Draft(List.of(new Hop(Kind.TELEPORT, aimPoint, ground, jump)), warp,
+                    drafts.add(new Draft(List.of(new Hop(Kind.TELEPORT, aimPoint, ground, jump, dir)), warp,
                             groundFeet, warp + walkAfter(c, groundFeet)));
                 }
             }

@@ -125,6 +125,15 @@ public class AhFlipperConfig {
     public boolean bidMacroAutoList = true;
     /** Wait before the bid is submitted (ms, 0 = none), with a random +-1 ms offset. */
     public int bidMacroDelayMs = 0;
+    /**
+     * Exponential rebid cooldown: after being outbid, wait longer the longer the auction still
+     * runs (far: two hours or more left, near: the last five minutes).
+     */
+    public boolean bidMacroRebidCooldown = true;
+    public double bidMacroRebidFarMinSeconds = 60.0;
+    public double bidMacroRebidFarMaxSeconds = 120.0;
+    /** Longest wait in the last five minutes (ms); the shortest is always 1 ms. */
+    public double bidMacroRebidNearMaxMs = 5.0;
     public boolean investmentGui = true;
     public long investmentMaxBuyPrice = 100_000L;
     public long investmentMinPrice = 1_000L;
@@ -403,6 +412,10 @@ public class AhFlipperConfig {
                         loaded.maxAuctions = 14;
                     }
                     loaded.ahSlots = Math.max(0, Math.min(60, loaded.ahSlots));
+                    loaded.bidMacroRebidFarMinSeconds = Math.max(0, Math.min(600, loaded.bidMacroRebidFarMinSeconds));
+                    loaded.bidMacroRebidFarMaxSeconds = Math.max(loaded.bidMacroRebidFarMinSeconds,
+                            Math.min(900, loaded.bidMacroRebidFarMaxSeconds));
+                    loaded.bidMacroRebidNearMaxMs = Math.max(1, Math.min(1000, loaded.bidMacroRebidNearMaxMs));
                     if (loaded.cvOutlierPercent <= 0) {
                         loaded.cvOutlierPercent = 50.0;
                     }

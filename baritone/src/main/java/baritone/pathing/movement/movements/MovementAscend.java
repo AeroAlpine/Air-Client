@@ -219,17 +219,20 @@ public class MovementAscend extends Movement {
         state.setInput(Input.SNEAK, Baritone.settings().allowWalkOnMagmaBlocks.value && jumpingOnto.is(Blocks.MAGMA_BLOCK));
 
         if (MovementHelper.isBottomSlab(jumpingOnto) && !MovementHelper.isBottomSlab(BlockStateInterface.get(ctx, src.below()))) {
+            state.setInput(Input.SPRINT, true); // a slope: walk up at full speed
             return state; // don't jump while walking from a non double slab into a bottom slab
         }
 
         if (MovementHelper.isStairStepUp(jumpingOnto, dest.getX() - src.getX(), dest.getZ() - src.getZ())) {
             // Air Client: stairs are walked up. Jumping on every step hopped and stuttered.
+            state.setInput(Input.SPRINT, true);
             return state;
         }
 
         if (ctx.player().onGround() && !MovementHelper.needsJump(ctx, dest)) {
             // Air Client: from a slab / the top of a stair the next block is only half a block
             // higher: walk up. A jump there (6 blocks with Jump Boost) looked like a bot.
+            state.setInput(Input.SPRINT, true);
             return state;
         }
 
