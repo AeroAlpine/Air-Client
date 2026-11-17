@@ -325,13 +325,18 @@ public class AhScreenUtil {
         return found == null ? -1 : found;
     }
 
-    /** Own ended auction in "Manage Auctions": sold ones, optionally also expired ones. */
+    /**
+     * Ended auction in "Manage Auctions": sold ones, optionally also expired ones.
+     * Auctions of co-op members ("Seller is in your co-op!") count too: they use
+     * the same shared AH slots, so they have to be collected as well.
+     */
     public static int findEndedAuctionSlot(boolean includeExpired) {
         Integer found = ScreenUtil.sync(() -> {
             Screen screen = Minecraft.getInstance().gui.screen();
             if (!(screen instanceof AbstractContainerScreen<?> container)) {
                 return -1;
             }
+            scanCoopSellers(container);
             int size = containerSize(container);
             for (int i = 0; i < size; i++) {
                 boolean sold = false;
@@ -341,7 +346,8 @@ public class AhScreenUtil {
                     String lower = ScreenUtil.cleanName(line).toLowerCase(Locale.ROOT);
                     sold |= lower.contains("status: sold");
                     expired |= lower.contains("status: expired");
-                    own |= lower.contains("this is your own auction");
+                    own |= lower.contains("this is your own auction")
+                            || lower.contains("seller is in your co-op");
                 }
                 if (own && (sold || (includeExpired && expired))) {
                     return i;
@@ -350,6 +356,74 @@ public class AhScreenUtil {
             return -1;
         });
         return found == null ? -1 : found;
+    }
+
+    /**
+     * Learns co-op members from the auctions marked "Seller is in your co-op!" -
+     * every member adds AH slots (see {@link AhSlotLimit}). Render thread only.
+     */
+    public static void scanCoopSellers(AbstractContainerScreen<?> container) {
+        int size = containerSize(container);
+        for (int i = 0; i < size; i++) {
+            String seller = null;
+            boolean coop = false;
+            for (String line : loreLines(itemAt(container, i))) {
+                String plain = ScreenUtil.cleanName(line).trim();
+                if (plain.startsWith("Seller:")) {
+                    seller = plain.substring("Seller:".length()).trim();
+                } else if (plain.toLowerCase(Locale.ROOT).contains("seller is in your co-op")) {
+                    coop = true;
+                }
+            }
+            if (coop && seller != null) {
+                AhSlotLimit.onCoopSeller(stripRank(seller));
+            }
+        }
+    }
+
+    /**
+     * "You own N auctions in progress or which recently ended" of the open AH main
+     * menu (counts the whole co-op), -1 when not shown or still loading. Render thread.
+     */
+    public static int ownedAuctionsShown(AbstractContainerScreen<?> container) {
+        int size = containerSize(container);
+        for (int i = 0; i < size; i++) {
+            ItemStack stack = itemAt(container, i);
+            if (stack.isEmpty()) {
+                continue;
+            }
+            String hover = ScreenUtil.cleanName(stack.getHoverName().getString()).toLowerCase(Locale.ROOT);
+            boolean create = hover.contains("create auction");
+            if (!create && !hover.contains("manage auctions") && !hover.contains("auctions management")) {
+                continue;
+            }
+            int owned = create ? 0 : -1;
+            for (String line : loreLines(stack)) {
+                String plain = ScreenUtil.cleanName(line);
+                if (plain.toLowerCase(Locale.ROOT).contains("loading")) {
+                    return -1;
+                }
+                java.util.regex.Matcher matcher = OWNED_AUCTIONS.matcher(plain);
+                if (matcher.find()) {
+                    owned = Integer.parseInt(matcher.group(1));
+                }
+            }
+            return owned;
+        }
+        return -1;
+    }
+
+    /** Co-op members from the "By: Name" lines of "Co-op Bazaar Orders". Render thread. */
+    public static void scanCoopOrderOwners(AbstractContainerScreen<?> container) {
+        int size = containerSize(container);
+        for (int i = 0; i < size; i++) {
+            for (String line : loreLines(itemAt(container, i))) {
+                String plain = ScreenUtil.cleanName(line).trim();
+                if (plain.startsWith("By:")) {
+                    AhSlotLimit.onCoopSeller(stripRank(plain.substring("By:".length()).trim()));
+                }
+            }
+        }
     }
 
     public static boolean isRelevant(AbstractContainerScreen<?> container) {

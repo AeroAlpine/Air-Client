@@ -675,7 +675,38 @@ public final class ScreenUtil {
         return false;
     }
 
+    /** Thrown inside an automation flow whose bot was switched off meanwhile. */
+    public static final class AutomationAborted extends RuntimeException {
+        public AutomationAborted() {
+            super("automation stopped", null, false, false);
+        }
+    }
+
+    private static final ThreadLocal<java.util.function.BooleanSupplier> ABORT_CHECK = new ThreadLocal<>();
+
+    /**
+     * Lets a worker thread's GUI flow stop as soon as {@code check} turns true: the
+     * next sleep, click, command or close throws {@link AutomationAborted} instead
+     * of touching the menu - so a stopped bot no longer clicks in, or closes, a
+     * menu the player opened himself. {@code null} removes the check.
+     */
+    public static void setAbortCheck(java.util.function.BooleanSupplier check) {
+        if (check == null) {
+            ABORT_CHECK.remove();
+        } else {
+            ABORT_CHECK.set(check);
+        }
+    }
+
+    public static void checkAbort() {
+        java.util.function.BooleanSupplier check = ABORT_CHECK.get();
+        if (check != null && check.getAsBoolean()) {
+            throw new AutomationAborted();
+        }
+    }
+
     public static void sleep(long ms) {
+        checkAbort();
         if (ms <= 0) {
             return;
         }
@@ -701,6 +732,7 @@ public final class ScreenUtil {
     }
 
     public static void clickSlot(int slot, int button) {
+        checkAbort();
         onClient(() -> {
             Minecraft client = Minecraft.getInstance();
             if (!(client.gui.screen() instanceof AbstractContainerScreen<?> container)) {
@@ -726,6 +758,7 @@ public final class ScreenUtil {
      * it like any other click on a button.
      */
     public static void middleClickSlot(int slot) {
+        checkAbort();
         onClient(() -> middleClickNow(slot));
     }
 
@@ -1003,6 +1036,7 @@ public final class ScreenUtil {
     }
 
     public static void closeCurrentScreen() {
+        checkAbort();
         onClient(() -> {
             Minecraft client = Minecraft.getInstance();
             Screen screen = client.gui.screen();

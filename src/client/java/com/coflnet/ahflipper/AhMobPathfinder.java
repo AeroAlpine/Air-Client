@@ -207,6 +207,15 @@ public final class AhMobPathfinder {
             }
         }
         setDesiredAim(player, ahead);
+        // Stay within 90 degrees of where Baritone really walks (its silent rotation): the
+        // camera must not fight the walking direction (see FollowFeature).
+        if (baritone.getPathingBehavior().isPathing()) {
+            float walkYaw = baritone.getPlayerContext().playerRotations().getYaw();
+            double diff = net.minecraft.util.Mth.wrapDegrees(desiredYaw - walkYaw);
+            if (Math.abs(diff) > 90.0) {
+                desiredYaw = walkYaw + Math.signum(diff) * 90.0;
+            }
+        }
     }
 
     private static Vec3 pathAhead(IBaritone baritone, Player player) {

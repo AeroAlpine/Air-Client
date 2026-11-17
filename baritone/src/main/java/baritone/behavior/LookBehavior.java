@@ -169,6 +169,14 @@ public final class LookBehavior extends Behavior implements ILookBehavior {
         return new Rotation(yaw, wanted.getPitch());
     }
 
+    /**
+     * Air Client: the yaw the player will really move with this tick when Baritone wants
+     * {@code wanted} - the turn limit can keep it a few ticks behind.
+     */
+    public float plannedMoveYaw(Rotation wanted) {
+        return limitTurn(this.processor.peekRotation(wanted)).getYaw();
+    }
+
     public void pig() {
         if (this.target != null) {
             final Rotation actual = this.processor.peekRotation(this.target.rotation);

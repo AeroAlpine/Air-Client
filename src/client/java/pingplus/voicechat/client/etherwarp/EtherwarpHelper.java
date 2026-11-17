@@ -27,13 +27,14 @@ import net.minecraft.world.phys.Vec3;
  *   <li>Item detection via Hypixel NBT ({@code id} + {@code ethermerge} flag inside
  *       the {@code custom_data} component), with item-lore fallback ("etherwarp").</li>
  *   <li>Voxel raycast (DDA) from the player's eye along the look vector. Every block
- *       is tested as a full voxel; blacklisted pass-through blocks (fluids, plants,
- *       torches, carpets, cobwebs, ...) are skipped. Stops at the first other block,
- *       max 57 blocks.</li>
- *   <li>Target validation rejects water, lava, carpet, torch, cobweb,
- *       grass/flower-like blocks and tripwire, and requires two blocks of air
- *       or water above the target. Slabs, stairs, fences, chests and leaves
- *       are valid when they have that headroom.</li>
+ *       is tested as a full voxel; pass-through blocks (fluids, everything without
+ *       collision like plants and torches - except tripwire - plus player heads,
+ *       carpets, cobwebs) are skipped. Stops at the first other block, max 57 blocks.</li>
+ *   <li>Target validation rejects water, lava, carpet, torch, cobweb and
+ *       grass/flower-like blocks, and requires two blocks of room above the
+ *       target: air, water or anything the player walks through (grass, flowers,
+ *       mushrooms, player heads ...), which etherwarp ignores as well. Slabs,
+ *       stairs, fences, chests and leaves are valid when they have that room.</li>
  * </ul>
  *
  * <p>Client-side only, recomputed at most every 3rd client tick. The result is
@@ -217,22 +218,53 @@ public final class EtherwarpHelper {
     /** The ray passes through this state (treated as air). */
     public static boolean isPassThrough(Level level, BlockPos pos, BlockState state) {
         if (state.isAir()) return true;
-        String path;
-        try {
-            path = BuiltInRegistries.BLOCK.getKey(state.getBlock()).getPath();
-        } catch (Exception e) {
-            return false;
-        }
+        String path = blockPath(state);
+        if (path == null) return false;
         // Tripwire stops the ray (blacklisted target) despite having no collision.
         if (path.contains("tripwire")) return false;
+        if (isHead(path)) return true; // player heads / skulls: the warp goes through them
         try {
             if (!state.getFluidState().isEmpty()) return true; // water, lava
-            if (state.getCollisionShape(level, pos).isEmpty()) return true; // plants, torches, dust, rails, ...
+            // Everything the player walks through: grass, flowers, mushrooms,
+            // saplings, torches, rails, buttons, signs, ...
+            if (state.getCollisionShape(level, pos).isEmpty()) return true;
         } catch (Exception e) {
             return true;
         }
         // Thin but colliding blocks that must not stop an etherwarp ray.
         return path.contains("carpet") || path.equals("cobweb") || path.equals("snow");
+    }
+
+    /**
+     * Room for the player above an etherwarp target: air, water and every block
+     * the player can walk through (grass, ferns, flowers, mushrooms, dead bushes,
+     * torches, signs, player heads ...). Etherwarp ignores those, just like the
+     * player does when walking. Lava does not count.
+     */
+    public static boolean isWarpRoom(Level level, BlockPos pos, BlockState state) {
+        if (state.isAir() || state.is(Blocks.WATER)) return true;
+        String path = blockPath(state);
+        if (path == null || path.contains("tripwire")) return false;
+        if (isHead(path)) return true;
+        try {
+            if (!state.getFluidState().isEmpty()) return false; // lava (water handled above)
+            return state.getCollisionShape(level, pos).isEmpty();
+        } catch (Exception e) {
+            return false;
+        }
+    }
+
+    private static String blockPath(BlockState state) {
+        try {
+            return BuiltInRegistries.BLOCK.getKey(state.getBlock()).getPath();
+        } catch (Exception e) {
+            return null;
+        }
+    }
+
+    /** Mob/player heads and skulls (floor and wall variants), not piston heads. */
+    static boolean isHead(String path) {
+        return (path.endsWith("_head") || path.endsWith("_skull")) && !path.startsWith("piston");
     }
 
     private static boolean isRayStopper(Level level, BlockPos pos, BlockState state) {
@@ -271,7 +303,7 @@ public final class EtherwarpHelper {
         } catch (Exception e) {
             return false;
         }
-        return state.isAir() || state.is(Blocks.WATER);
+        return isWarpRoom(level, pos, state);
     }
 
     static boolean isBlacklisted(Level level, BlockPos pos, BlockState state) {

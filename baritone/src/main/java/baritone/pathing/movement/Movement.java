@@ -23,6 +23,7 @@ import baritone.api.pathing.movement.IMovement;
 import baritone.api.pathing.movement.MovementStatus;
 import baritone.api.utils.*;
 import baritone.api.utils.input.Input;
+import baritone.behavior.LookBehavior;
 import baritone.behavior.PathingBehavior;
 import baritone.utils.BlockStateInterface;
 import java.util.*;
@@ -132,10 +133,14 @@ public abstract class Movement implements IMovement, MovementHelper {
         }
 
         // If the movement target has to force the new rotations, or we aren't using silent move, then force the rotations
-        currentState.getTarget().getRotation().ifPresent(rotation ->
-                baritone.getLookBehavior().updateTarget(
-                        rotation,
-                        currentState.getTarget().hasToForceRotations()));
+        currentState.getTarget().getRotation().ifPresent(rotation -> {
+            baritone.getLookBehavior().updateTarget(
+                    rotation,
+                    currentState.getTarget().hasToForceRotations());
+            if (!currentState.getTarget().hasToForceRotations()) {
+                alignInputsWithTurn(currentState, rotation);
+            }
+        });
         baritone.getInputOverrideHandler().clearAllKeys();
         currentState.getInputStates().forEach((input, forced) -> {
             baritone.getInputOverrideHandler().setInputForceState(input, forced);
@@ -148,6 +153,44 @@ public abstract class Movement implements IMovement, MovementHelper {
         }
 
         return currentState.getStatus();
+    }
+
+    /**
+     * Air Client: the walking direction may only turn {@code maxYawChangePerTick} degrees per
+     * tick. Holding forward during a bigger turn walked through every direction in between: the
+     * path recorder showed 2 blocks of sideways drift after each corner and the bot walking back
+     * and forth. While the turn is not done, pick the WASD keys that move towards the wanted
+     * direction from the yaw we really have (like a player who strafes a little into a corner);
+     * a turn of more than ~110 degrees waits the two or three ticks it takes.
+     */
+    private void alignInputsWithTurn(MovementState state, Rotation rotation) {
+        java.util.Map<Input, Boolean> inputs = state.getInputStates();
+        if (!Boolean.TRUE.equals(inputs.get(Input.MOVE_FORWARD))
+                || Boolean.TRUE.equals(inputs.get(Input.MOVE_BACK))
+                || Boolean.TRUE.equals(inputs.get(Input.MOVE_LEFT))
+                || Boolean.TRUE.equals(inputs.get(Input.MOVE_RIGHT))) {
+            return;
+        }
+        float wantYaw = rotation.getYaw();
+        float moveYaw = ((LookBehavior) baritone.getLookBehavior()).plannedMoveYaw(rotation);
+        float off = net.minecraft.util.Mth.wrapDegrees(wantYaw - moveYaw);
+        if (Math.abs(off) <= 25f) {
+            return;
+        }
+        state.setInput(Input.MOVE_FORWARD, false);
+        if (Math.abs(off) > 112.5f) {
+            return;
+        }
+        float rad = (float) Math.PI / 180f;
+        MovementOption.getOptions(
+                net.minecraft.util.Mth.sin(moveYaw * rad),
+                net.minecraft.util.Mth.cos(moveYaw * rad),
+                Baritone.settings().allowSprint.value
+        ).filter(option -> option.input1() != Input.MOVE_BACK)
+                .min(java.util.Comparator.comparing(option -> option.distanceToSq(
+                        net.minecraft.util.Mth.sin(wantYaw * rad),
+                        net.minecraft.util.Mth.cos(wantYaw * rad))))
+                .ifPresent(option -> option.setInputs(state));
     }
 
     protected boolean prepared(MovementState state) {

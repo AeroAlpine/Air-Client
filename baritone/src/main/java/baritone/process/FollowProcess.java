@@ -90,9 +90,11 @@ public final class FollowProcess extends BaritoneProcessHelper implements IFollo
         // always keeps the goal on itself. (A stale goal next to a walking mob made the bot walk
         // to where the mob was, away from it, and back: circles.)
         double threshold = Math.max(REANCHOR_DIST_SQ, playerDistSq * 0.05);
+        // Close: at most every 400 ms (was 250 ms: seven new paths in two seconds in front of a
+        // wandering mob). On open ground the combat bot walks the last blocks straight anyway.
         if (anchor == null
                 || (close && anchor.distSqr(pos) >= 2.0 && canReplanNow()
-                && now - lastReanchorAt >= 250L)
+                && now - lastReanchorAt >= REANCHOR_MIN_MS)
                 || (!close && anchor.distSqr(pos) >= threshold && canReplanNow()
                 && now - lastReanchorAt >= REANCHOR_MIN_MS)) {
             anchor = pos.immutable();
