@@ -736,7 +736,13 @@ public interface MovementHelper extends ActionCosts, Helper {
         double dirZ = Integer.signum(dest.getZ() - src.getZ());
         double ahead = (dest.getX() + 0.5 - ctx.player().position().x) * dirX
                 + (dest.getZ() + 0.5 - ctx.player().position().z) * dirZ;
-        state.setInput(Input.MOVE_FORWARD, ahead > 0.15);
+        // Forward / back relative to the move direction: only valid while the view still points
+        // that way (it is kept as it is here). Otherwise just let go.
+        float moveYaw = (float) Math.toDegrees(Math.atan2(-dirX, dirZ));
+        boolean facing = Math.abs(Mth.wrapDegrees(ctx.playerRotations().getYaw() - moveYaw)) < 60f;
+        state.setInput(Input.MOVE_FORWARD, facing && ahead > 0.15);
+        // Past the centre (long Jump Boost jumps): brake, so we come down on the block.
+        state.setInput(Input.MOVE_BACK, facing && ahead < -0.3);
     }
 
     /** Baritone's original: always aim at the block centre (pillar / downward need that). */

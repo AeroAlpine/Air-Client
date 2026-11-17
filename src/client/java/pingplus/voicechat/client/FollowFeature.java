@@ -51,6 +51,10 @@ public final class FollowFeature {
     private static int hiddenTicks;
     private static int visibleTicks;
     private static boolean closeIn;
+    /** Walking straight at a close mob without Baritone (see DirectChase). */
+    private static boolean directChase;
+    /** We hold the forward key ourselves during a direct chase. */
+    private static boolean pressingForward;
     private static final int HIDDEN_SWITCH_TICKS = 10;
     /** Ticks between searches while no target is around. */
     private static final int SEARCH_RETRY_TICKS = 4;
@@ -280,6 +284,27 @@ public final class FollowFeature {
         configure(closeIn && attack != null);
         IFollowProcess follow = baritone.getFollowProcess();
         EntityObstacles.setTarget(current);
+        // Last few blocks on open, level ground: walk straight at the mob. Re-planning a
+        // path for every step the mob takes made the bot run circles in front of it.
+        if (attack != null && com.coflnet.pathing.DirectChase.possible(client.level, player, current, directChase)) {
+            if (!directChase) {
+                directChase = true;
+                if (issued != null) {
+                    follow.cancel();
+                }
+                baritone.getPathingBehavior().cancelEverything();
+                issued = null;
+            }
+            active = true;
+            KillAuraFeature.setForcedTarget(entity -> entity == attack,
+                    PlayerSettings.followCpsMin, PlayerSettings.followCpsMax);
+            updateLook(client, player, baritone, current, true);
+            steerStraight(client, player, current);
+            return;
+        }
+        if (directChase) {
+            endDirectChase(client);
+        }
         if (issued != current || !follow.isActive()) {
             follow.follow(entity -> entity == current);
             issued = current;
@@ -317,6 +342,7 @@ public final class FollowFeature {
             // block of it (that was the left-right-left twitching on diagonal paths).
             smoothLook = smoothLook == null ? ahead : smoothLook.lerp(ahead, com.coflnet.pathing.MovementStyle.lookBlend());
             setLook(player, smoothLook);
+            keepNearWalkingDirection(baritone);
             return;
         }
         smoothLook = null;
@@ -325,6 +351,23 @@ public final class FollowFeature {
         }
         setLook(player, new net.minecraft.world.phys.Vec3(target.getX(),
                 target instanceof LivingEntity living ? living.getEyeY() : target.getY(), target.getZ()));
+    }
+
+    /**
+     * The camera looks ahead along the path, Baritone walks with its own (silent) rotation. The
+     * path recorder showed both 125 degrees apart after a failed jump - the camera fought the
+     * walking direction and every warp started with a big jump of the rotation the server
+     * sees. So the camera stays within 90 degrees of where we really walk.
+     */
+    private static void keepNearWalkingDirection(IBaritone baritone) {
+        if (!hasLook) {
+            return;
+        }
+        float walkYaw = baritone.getPlayerContext().playerRotations().getYaw();
+        float diff = net.minecraft.util.Mth.wrapDegrees(lookYaw - walkYaw);
+        if (Math.abs(diff) > 90.0f) {
+            lookYaw = walkYaw + Math.signum(diff) * 90.0f;
+        }
     }
 
     private static void setLook(LocalPlayer player, net.minecraft.world.phys.Vec3 point) {
@@ -509,7 +552,41 @@ public final class FollowFeature {
         }
     }
 
+    /** Forward while the mob is out of reach and roughly in front of us; the camera turns to it. */
+    private static void steerStraight(Minecraft client, LocalPlayer player, Entity target) {
+        double dx = target.getX() - player.getX();
+        double dz = target.getZ() - player.getZ();
+        double reach = Math.min(Math.clamp(PlayerSettings.followDistance, 1, 16), PlayerSettings.killAuraRange);
+        double stopAt = Math.max(1.5, reach - 0.5);
+        float yawTo = (float) (Math.toDegrees(Math.atan2(dz, dx)) - 90.0);
+        float off = Math.abs(net.minecraft.util.Mth.wrapDegrees(yawTo - player.getYRot()));
+        boolean forward = Math.sqrt(dx * dx + dz * dz) > stopAt && off < 45.0f
+                && client.gui.screen() == null;
+        if (forward) {
+            // every tick: opening a menu releases all keys
+            client.options.keyUp.setDown(true);
+        } else if (pressingForward) {
+            client.options.keyUp.setDown(false);
+        }
+        pressingForward = forward;
+    }
+
+    private static void endDirectChase(Minecraft client) {
+        directChase = false;
+        releaseForward(client);
+    }
+
+    private static void releaseForward(Minecraft client) {
+        if (pressingForward) {
+            client.options.keyUp.setDown(false);
+            pressingForward = false;
+        }
+    }
+
     private static void stopBaritone() {
+        if (directChase) {
+            endDirectChase(Minecraft.getInstance());
+        }
         if (!active) {
             return;
         }

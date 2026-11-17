@@ -15,6 +15,12 @@ import java.util.concurrent.ConcurrentHashMap;
 
 public class AhFlipperConfig {
     public int maxAuctions = 14;
+    /** AH slots the flipper fills. 0 = automatic: 14 + 3 per further co-op member. */
+    public int ahSlots = 0;
+    /** Co-op members seen per SkyBlock profile (for the automatic AH slot count). */
+    public Map<String, List<String>> coopMembersByProfile = new java.util.HashMap<>();
+    /** Exact AH limit per profile, learned when Hypixel reported "reached the maximum". */
+    public Map<String, Integer> ahSlotsConfirmedByProfile = new java.util.HashMap<>();
     public long reserveCoins = 1_000_000L;
     public long maxBankrollCoins = 0L;
     public double ahFeePercent = 5.0;
@@ -396,6 +402,7 @@ public class AhFlipperConfig {
                     if (loaded.maxAuctions > 14) {
                         loaded.maxAuctions = 14;
                     }
+                    loaded.ahSlots = Math.max(0, Math.min(60, loaded.ahSlots));
                     if (loaded.cvOutlierPercent <= 0) {
                         loaded.cvOutlierPercent = 50.0;
                     }

@@ -394,6 +394,25 @@ final class SkyblockModules {
                                 c.coflLbinMatchPercent = v;
                                 c.save();
                             });
+            b.group("Auction slots")
+                    .slider("AH slots", "How many auctions the flipper keeps listed. 0 = auto: "
+                                    + "14 + 3 per further co-op member. When they are all used, "
+                                    + "listing waits until a sale is collected.", 0, 50, 1, "",
+                            () -> c.ahSlots, v -> {
+                                c.ahSlots = (int) Math.round(v);
+                                c.save();
+                            })
+                    .info("Slots in use", "Running auctions of the whole co-op / slot limit.",
+                            () -> {
+                                int count = AhFlipperMod.activeAuctionCount();
+                                String used = (count < 0 ? "?" : String.valueOf(count))
+                                        + " / " + com.coflnet.ahflipper.AhSlotLimit.limit();
+                                return com.coflnet.ahflipper.AhSlotLimit.isManual()
+                                        ? used + " (manual)"
+                                        : used + " - auto: " + com.coflnet.ahflipper.AhSlotLimit.describe();
+                            },
+                            () -> AhFlipperMod.activeAuctionCount() >= com.coflnet.ahflipper.AhSlotLimit.limit()
+                                    ? 0xFFF0C27A : 0xFFD0D0D0);
             b.session(BotSessions.Bot.AH);
             b.panel("AH flip panel", () -> c.ahPanelEnabled, () -> { c.ahPanelEnabled = !c.ahPanelEnabled; c.save(); },
                     () -> c.ahPanelRows, v -> { c.ahPanelRows = v; c.save(); });
@@ -737,13 +756,21 @@ final class SkyblockModules {
                 .slider("Search limit", "Longest time a path search may take.", 1, 10, .5, "s",
                         () -> pf.failureTimeoutMs / 1000.0, v -> { pf.failureTimeoutMs = Math.round(v * 1000); pf.save(); })
                 .group("AOTV")
-                .choice("Mode", "Aspect of the Void: teleport ahead on long paths, or Etherwarp, or off.",
+                .choice("Mode", "Pathfinder stages: 1. Etherwarp, 2. Teleport, 3. walking. BOTH uses all three, "
+                                + "OFF only walks. The lowballer always walks.",
                         java.util.Arrays.stream(com.coflnet.pathing.AotvAssist.Mode.values()).map(Enum::name).toList(),
                         () -> com.coflnet.pathing.AotvAssist.mode().name(), v -> { pf.aotvMode = v; pf.save(); })
-                .slider("Teleport blocks", "How far one teleport goes.", 4, 20, 1, "blocks",
+                .slider("Teleport blocks", "How far one teleport goes (read from the item when it says so).", 4, 20, 1, "blocks",
                         () -> pf.aotvTeleportBlocks, v -> { pf.aotvTeleportBlocks = (int) Math.round(v); pf.save(); })
-                .slider("Min gain", "Only teleports that save at least this much walking.", 3, 40, 1, "blocks",
+                .slider("Min gain", "Only warps that save at least as much time as walking this many blocks.", 3, 40, 1, "blocks",
                         () -> pf.aotvMinGain, v -> { pf.aotvMinGain = (int) Math.round(v); pf.save(); })
+                .slider("Etherwarp cost", "Extra cost of one etherwarp (mana). Higher = only for clearly better routes.",
+                        0, 100, 1, "ticks",
+                        () -> pf.etherwarpCostTicks, v -> { pf.etherwarpCostTicks = v; pf.save(); })
+                .slider("Teleport cost", "Extra cost of one teleport (mana).", 0, 40, 1, "ticks",
+                        () -> pf.teleportCostTicks, v -> { pf.teleportCostTicks = v; pf.save(); })
+                .slider("Etherwarps in a row", "Most etherwarps planned one after another.", 1, 3, 1, "",
+                        () -> pf.etherwarpMaxChain, v -> { pf.etherwarpMaxChain = (int) Math.round(v); pf.save(); })
                 .group("Learning from faults")
                 .toggle("Learn from faults", "Remembers spots where it got stuck and avoids them next time.",
                         () -> pf.learnFromFaults, () -> { pf.learnFromFaults = !pf.learnFromFaults; pf.save(); })

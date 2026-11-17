@@ -245,6 +245,8 @@ public abstract class HandledScreenMixin extends Screen {
 
     @Inject(at = @At("TAIL"), method = "extractRenderState")
     public void renderMain(GuiGraphicsExtractor context, int mouseX, int mouseY, float deltaTicks, CallbackInfo ci){
+        com.coflnet.gui.MarketTotalsOverlay.render(context, (AbstractContainerScreen<?>) (Object) this,
+                leftPos, topPos, imageWidth);
         try {
             if(sideTextWidget == null) {
                 return;

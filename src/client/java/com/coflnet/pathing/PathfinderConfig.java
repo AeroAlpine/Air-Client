@@ -46,8 +46,17 @@ public final class PathfinderConfig {
     public String aotvMode = "OFF";
     /** Blocks a normal right-click teleport goes (8 + tuned transmission). */
     public int aotvTeleportBlocks = 12;
-    /** Only warp when it skips at least this many path steps. */
+    /** Only warp when it saves at least as much time as walking this many blocks. */
     public int aotvMinGain = 8;
+    /**
+     * Extra cost of one etherwarp in ticks on top of the time it really takes (switching,
+     * sneaking, turning): stands for the mana. Higher = etherwarp only for clearly better routes.
+     */
+    public double etherwarpCostTicks = 25.0;
+    /** Extra cost of one teleport (mana) in ticks. */
+    public double teleportCostTicks = 4.0;
+    /** Most etherwarps planned in a row. */
+    public int etherwarpMaxChain = 3;
 
     /** Static NPCs / mobs that block the way count as obstacles. */
     public boolean avoidStandingEntities = true;
@@ -138,6 +147,9 @@ public final class PathfinderConfig {
         aotvTeleportBlocks = (int) clamp(aotvTeleportBlocks, 4, 20);
         movementCalmness = clamp(movementCalmness, 0.0, 100.0);
         aotvMinGain = (int) clamp(aotvMinGain, 3, 40);
+        etherwarpCostTicks = clamp(etherwarpCostTicks, 0.0, 200.0);
+        teleportCostTicks = clamp(teleportCostTicks, 0.0, 100.0);
+        etherwarpMaxChain = (int) clamp(etherwarpMaxChain, 1, 3);
         if (aotvMode == null || aotvMode.isBlank()) {
             aotvMode = "OFF";
         }

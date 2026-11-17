@@ -135,12 +135,14 @@ public final class EtherwarpTest implements FabricClientGameTest {
     // stone below, solid features stop the ray inside their own voxel.
     private static void assertRaycast(net.minecraft.client.multiplayer.ClientLevel level) {
         // Carpet / water / torch / cobweb / grass / poppy / lava are passed through.
+        // Blocks the player walks through (torch, cobweb, grass, poppy) also leave
+        // room to land: etherwarp ignores them. Carpet and lava do not.
         assertTarget(computeAim(level, 8.2, 63.5, 0.5, 8.5, 60.5, 0.5), 8, 60, 0, false, "carpet");
         assertTarget(computeAim(level, 12.2, 63.5, 0.5, 12.5, 60.5, 0.5), 12, 60, 0, true, "water");
-        assertTarget(computeAim(level, 16.2, 63.5, 0.5, 16.5, 60.5, 0.5), 16, 60, 0, false, "torch");
-        assertTarget(computeAim(level, 32.2, 63.5, 0.5, 32.5, 60.5, 0.5), 32, 60, 0, false, "cobweb");
-        assertTarget(computeAim(level, 36.2, 63.5, 0.5, 36.5, 60.5, 0.5), 36, 60, 0, false, "grass");
-        assertTarget(computeAim(level, 37.2, 63.5, 0.5, 37.5, 60.5, 0.5), 37, 60, 0, false, "poppy");
+        assertTarget(computeAim(level, 16.2, 63.5, 0.5, 16.5, 60.5, 0.5), 16, 60, 0, true, "torch");
+        assertTarget(computeAim(level, 32.2, 63.5, 0.5, 32.5, 60.5, 0.5), 32, 60, 0, true, "cobweb");
+        assertTarget(computeAim(level, 36.2, 63.5, 0.5, 36.5, 60.5, 0.5), 36, 60, 0, true, "grass");
+        assertTarget(computeAim(level, 37.2, 63.5, 0.5, 37.5, 60.5, 0.5), 37, 60, 0, true, "poppy");
         assertTarget(computeAim(level, 41.2, 63.5, 0.5, 41.5, 60.5, 0.5), 41, 60, 0, false, "lava");
         // Tripwire: blacklisted, invalid.
         assertTarget(computeAim(level, 44.2, 63.5, 0.5, 44.5, 60.5, 0.5), 44, 61, 0, false, "tripwire");

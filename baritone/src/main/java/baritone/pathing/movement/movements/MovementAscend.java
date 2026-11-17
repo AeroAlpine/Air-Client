@@ -207,6 +207,13 @@ public class MovementAscend extends Movement {
 
             return state;
         }
+        if (!ctx.player().onGround() && ctx.player().position().y > src.y + 0.2) {
+            // Air Client: in the air after the jump. With Jump Boost that is 20+ ticks: aiming
+            // at the block centre the whole time overshot it, the aim flipped by 180 degrees mid
+            // air and the bot came down where it jumped off (failed jump, jump again ...).
+            MovementHelper.steerWhileLanding(ctx, state, src, dest);
+            return state;
+        }
         MovementHelper.moveTowards(ctx, state, dest);
 
         state.setInput(Input.SNEAK, Baritone.settings().allowWalkOnMagmaBlocks.value && jumpingOnto.is(Blocks.MAGMA_BLOCK));

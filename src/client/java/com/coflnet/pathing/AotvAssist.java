@@ -1,11 +1,15 @@
 package com.coflnet.pathing;
 
+import baritone.api.BaritoneAPI;
 import baritone.api.IBaritone;
+import baritone.api.pathing.calc.IPath;
+import baritone.api.pathing.goals.Goal;
 import baritone.api.pathing.path.IPathExecutor;
 import baritone.api.process.IBaritoneProcess;
 import baritone.api.process.PathingCommand;
 import baritone.api.process.PathingCommandType;
 import baritone.api.utils.BetterBlockPos;
+import baritone.api.utils.Rotation;
 import net.minecraft.client.KeyMapping;
 import net.minecraft.client.Minecraft;
 import net.minecraft.client.player.LocalPlayer;
@@ -15,7 +19,6 @@ import net.minecraft.nbt.CompoundTag;
 import net.minecraft.world.InteractionHand;
 import net.minecraft.world.item.ItemStack;
 import net.minecraft.world.item.component.CustomData;
-import net.minecraft.world.level.Level;
 import net.minecraft.world.phys.Vec3;
 import pingplus.voicechat.client.etherwarp.EtherwarpHelper;
 
@@ -24,38 +27,55 @@ import java.util.Locale;
 import java.util.Optional;
 
 /**
- * Uses the Aspect of the Void (or End) while Baritone walks:
- * <ul>
- *   <li><b>Etherwarp</b> (Shift + right click): onto a visible, valid block of
- *       the path up to 57 blocks ahead.</li>
- *   <li><b>Teleport</b> (right click): straight ahead (default 12 blocks) when
- *       the path runs straight, level and free.</li>
- * </ul>
- * Baritone is paused for the few ticks of a warp (own high-priority process),
- * afterwards it plans again from the new position.
+ * The pathfinder's three stages, in this order - only the ones switched on (Pathfinder tab,
+ * AOTV mode) take part:
+ * <ol>
+ *   <li><b>Etherwarp</b>: up to three warps onto visible blocks, for goals that are hard to walk
+ *       to (a ledge, a single block in a wall, out of a cave).</li>
+ *   <li><b>Teleport</b>: AOTV right click, 12 blocks along the look; for long straight ways,
+ *       over rough ground after a jump, and straight down onto the floor while falling.</li>
+ *   <li><b>Walking</b> with Baritone - always, whenever no warp saves enough time.</li>
+ * </ol>
+ * {@link WarpPlanner} compares all of them in ticks (a warp costs its time plus an extra for
+ * the mana). While a warp runs Baritone is paused by a high-priority process; the camera turns
+ * smoothly to every warp direction first. The lowballer never warps.
  */
 public final class AotvAssist {
 
     public enum Mode { OFF, TELEPORT, ETHERWARP, BOTH }
 
-    private enum Step { IDLE, PREPARE, AIM, USE, WAIT }
-
-    private record Plan(boolean etherwarp, int slot, float yaw, float pitch, int gain) {
-    }
+    private enum Step { IDLE, PREPARE, JUMP, AIM, USE, WAIT }
 
     private static final String ID_AOTE = "ASPECT_OF_THE_END";
     private static final String ID_AOTV = "ASPECT_OF_THE_VOID";
+    /** Without a path for this long Baritone counts as stuck: walking is then very expensive. */
+    private static final long NO_PATH_STUCK_MS = 1_500L;
 
     private static Step step = Step.IDLE;
-    private static Plan plan;
+    private static List<WarpPlanner.Hop> route = List.of();
+    private static int hopIndex;
+    private static int slot = -1;
     private static int stepTicks;
     private static int previousSlot = -1;
     private static boolean sneakOwned;
+    private static boolean jumpOwned;
     private static Vec3 startPos;
+    private static double jumpStartY;
     private static long cooldownUntil;
     private static int evaluateCounter;
     private static IBaritone registeredOn;
     private static int warps;
+    private static long noPathSince;
+    private static int alignedTicks;
+    private static long lastFrameNanos;
+    /** Teleports done in a row without walking in between (each one re-planned). */
+    private static int chain;
+    /** The current route was planned in the air (cutting a jump short): stale once we land. */
+    private static boolean plannedInAir;
+    private static WalkSearch walkCache;
+    private static List<BlockPos> walkCacheCenters = List.of();
+    private static long walkCacheAt;
+    private static net.minecraft.world.level.Level walkCacheLevel;
 
     /** Holds Baritone still while a warp is in progress. */
     private static final IBaritoneProcess PAUSE = new IBaritoneProcess() {
@@ -109,6 +129,16 @@ public final class AotvAssist {
         }
     }
 
+    private static boolean etherwarpOn(Mode mode) {
+        return mode == Mode.ETHERWARP || mode == Mode.BOTH;
+    }
+
+    private static boolean teleportOn(Mode mode) {
+        return mode == Mode.TELEPORT || mode == Mode.BOTH;
+    }
+
+    // ================================================================ planning
+
     /** Called every client tick by {@link PathfinderSystem}. */
     static void tick(Minecraft client, IBaritone baritone) {
         LocalPlayer player = client.player;
@@ -121,210 +151,280 @@ public final class AotvAssist {
             registeredOn = baritone;
         }
         if (step != Step.IDLE) {
+            if (client.gui.screen() != null || com.coflnet.lowballing.LowballingMod.isRunning()) {
+                abort(client);
+                return;
+            }
             runStep(client, player, baritone);
             return;
         }
-        Mode mode = mode();
+        Goal goal = baritone.getPathingBehavior().getGoal();
+        boolean botWalking = goal != null && baritone.getPathingControlManager().mostRecentInControl()
+                .filter(process -> process != PAUSE).isPresent();
         long now = System.currentTimeMillis();
-        if (mode == Mode.OFF || now < cooldownUntil || client.gui.screen() != null
-                || com.coflnet.lowballing.LowballingMod.isRunning()
-                || !baritone.getPathingBehavior().isPathing()
-                || !player.onGround()
-                || ++evaluateCounter % 5 != 0) {
+        if (!botWalking || baritone.getPathingBehavior().hasPath()) {
+            noPathSince = 0;
+        } else if (noPathSince == 0) {
+            noPathSince = now;
+        }
+        Mode mode = mode();
+        if (mode == Mode.OFF || !botWalking || now < cooldownUntil || client.gui.screen() != null
+                // the lowballer always walks: no AOTV, no etherwarp
+                || com.coflnet.lowballing.LowballingMod.isRunning()) {
+            chain = 0;
             return;
         }
-        Plan found = findPlan(client.level, player, baritone, mode);
-        if (found != null) {
-            plan = found;
-            step = Step.PREPARE;
-            stepTicks = 0;
+        // In the air (a jump - with Jump Boost 20+ ticks - or a drop): check often, a teleport
+        // can cut the flight short. On the ground every half second is enough.
+        boolean inAir = !player.onGround() && !player.onClimbable()
+                && airTicksLeft(client, player) >= 6;
+        int every = inAir ? 2 : 10;
+        if (++evaluateCounter % every != 0 || (!player.onGround() && !inAir)
+                || player.isInWater() || player.isInLava()) {
+            return;
         }
+        Optional<WarpPlanner.Route> found = plan(client, player, baritone, goal, mode, false);
+        found.ifPresent(r -> start(client, player, r));
     }
 
-    private static Plan findPlan(Level level, LocalPlayer player, IBaritone baritone, Mode mode) {
-        IPathExecutor executor = baritone.getPathingBehavior().getCurrent();
-        if (executor == null || executor.getPath() == null) {
-            return null;
-        }
-        List<BetterBlockPos> positions = executor.getPath().positions();
-        int from = Math.max(0, executor.getPosition());
+    private static Optional<WarpPlanner.Route> plan(Minecraft client, LocalPlayer player, IBaritone baritone,
+                                                    Goal goal, Mode mode, boolean chained) {
         PathfinderConfig config = PathfinderConfig.get();
-        Plan ether = null;
-        Plan tele = null;
-        if (mode == Mode.ETHERWARP || mode == Mode.BOTH) {
-            int slot = hotbarSlot(player, true);
-            if (slot >= 0) {
-                ether = etherwarpPlan(level, player, positions, from, config.aotvMinGain, slot);
+        WarpPlanner.Context c = new WarpPlanner.Context();
+        c.level = client.level;
+        c.feet = player.position();
+        c.eye = player.getEyePosition();
+        c.yaw = player.getYRot();
+        c.pitch = player.getXRot();
+        c.onGround = player.onGround();
+        c.verticalSpeed = player.getDeltaMovement().y;
+        c.airTicksLeft = c.onGround ? 0 : airTicksLeft(client, player);
+        c.goal = goal;
+        PlayerMovementStats stats = PathfinderTuning.stats();
+        c.speedFactor = Math.clamp(0.1 / Math.max(0.02, stats.speed()), 0.15, 1.5);
+        c.jumpHeight = stats.jumpHeight();
+        // one jump in the walking search: the air time of a jump onto a block (25+ ticks with
+        // strong Jump Boost) minus the walking part that is counted anyway
+        c.jumpTicks = Math.max(3.0, PlayerMovementStats.airTicksOntoBlock(stats.jumpVelocity(), stats.gravity()) - 3.0);
+        c.turnSpeed = turnSpeed();
+        c.maxChain = config.etherwarpMaxChain;
+        c.etherwarpExtraTicks = config.etherwarpCostTicks;
+        c.teleportExtraTicks = config.teleportCostTicks;
+
+        // Reuse the walking search (its block reads and answers) while the goal stays put:
+        // a landing spot that can not reach the goal costs the full search every time.
+        List<BlockPos> centers = WarpPlanner.goalCenters(goal);
+        long nowMs = System.currentTimeMillis();
+        if (walkCache == null || !centers.equals(walkCacheCenters) || nowMs - walkCacheAt > 3_000L
+                || walkCacheLevel != client.level) {
+            walkCache = WarpPlanner.newWalk(c);
+            walkCacheCenters = centers;
+            walkCacheAt = nowMs;
+            walkCacheLevel = client.level;
+        }
+        c.walk = walkCache;
+
+        IPathExecutor executor = baritone.getPathingBehavior().getCurrent();
+        IPath path = executor == null ? null : executor.getPath();
+        if (path != null && !chained) {
+            int from = Math.max(0, executor.getPosition());
+            List<BetterBlockPos> positions = path.positions();
+            c.path = from < positions.size() ? positions.subList(from, positions.size()) : List.of();
+            BlockPos end = path.getDest();
+            c.walkVanillaTicks = path.ticksRemainingFrom(from)
+                    + (goal.isInGoal(end) ? 0 : WarpPlanner.walkTicks(c, end));
+        } else if (chained) {
+            if (path != null) {
+                c.path = path.positions();
             }
+            c.walkVanillaTicks = WarpPlanner.walkTicks(c, player.blockPosition());
+        } else if (noPathSince > 0 && System.currentTimeMillis() - noPathSince > NO_PATH_STUCK_MS) {
+            // Baritone finds no way (a ledge, a hole in a wall): walking is not an option
+            c.walkVanillaTicks = WarpPlanner.walkTicks(c, player.blockPosition()) * 2.0 + 200.0;
+        } else {
+            return Optional.empty(); // still planning the first path
         }
-        if (mode == Mode.TELEPORT || mode == Mode.BOTH) {
-            int slot = hotbarSlot(player, false);
-            if (slot >= 0) {
-                int reach = teleportBlocks(player.getInventory().getItem(slot), config.aotvTeleportBlocks);
-                tele = teleportPlan(level, player, positions, from, config, slot, reach);
-            }
+        if (c.walkVanillaTicks <= 0) {
+            return Optional.empty();
         }
-        if (ether == null) {
-            return tele;
+        double minSaving = Math.max(6.0, config.aotvMinGain * 3.6 * c.speedFactor);
+        if (!c.onGround) {
+            // cutting a running jump short: every saved tick of flight counts
+            minSaving *= 0.5;
         }
-        if (tele == null) {
-            return ether;
+
+        WarpPlanner.Route best = null;
+        int etherSlot = hotbarSlot(player, true);
+        if (etherwarpOn(mode) && etherSlot >= 0 && c.onGround) {
+            best = better(best, WarpPlanner.etherwarp(c), minSaving, 0.15);
         }
-        return ether.gain() >= tele.gain() ? ether : tele;
+        int teleSlot = hotbarSlot(player, false);
+        if (teleportOn(mode) && teleSlot >= 0) {
+            ItemStack item = player.getInventory().getItem(teleSlot);
+            c.teleportReach = teleportBlocks(item, config.aotvTeleportBlocks);
+            best = better(best, WarpPlanner.teleport(c), minSaving, c.onGround ? 0.15 : 0.0);
+        }
+        if (best != null) {
+            WarpPlanner.Hop first = best.hops().get(0);
+            System.out.println("[Pathfinder] Warp-Plan: " + best.hops().size() + "x "
+                    + first.kind() + (first.jumpFirst() ? " (nach Sprung)" : "")
+                    + (c.onGround ? "" : " (in der Luft)") + String.format(Locale.ROOT,
+                    " %.0f statt %.0f Ticks, von %.1f %.1f %.1f nach %.1f %.1f %.1f",
+                    best.ticks(), best.walkTicks(), c.feet.x, c.feet.y, c.feet.z,
+                    best.hops().get(best.hops().size() - 1).landing().x,
+                    best.hops().get(best.hops().size() - 1).landing().y,
+                    best.hops().get(best.hops().size() - 1).landing().z));
+        }
+        return Optional.ofNullable(best);
     }
 
-    /** Farthest path point whose standing block can be seen and etherwarped onto. */
-    private static Plan etherwarpPlan(Level level, LocalPlayer player, List<BetterBlockPos> positions,
-                                      int from, int minGain, int slot) {
-        Vec3 eye = player.getEyePosition();
-        double maxSq = EtherwarpHelper.MAX_RANGE * EtherwarpHelper.MAX_RANGE;
-        for (int i = positions.size() - 1; i >= from + minGain; i--) {
-            BlockPos stand = positions.get(i).below();
-            Vec3 aim = new Vec3(stand.getX() + 0.5, stand.getY() + 0.95, stand.getZ() + 0.5);
-            if (aim.distanceToSqr(eye) > maxSq) {
-                continue;
-            }
-            Vec3 look = aim.subtract(eye);
-            Optional<EtherwarpHelper.RayHit> hit = EtherwarpHelper.raycast(level, eye, look, EtherwarpHelper.MAX_RANGE);
-            if (hit.isEmpty() || !hit.get().pos().equals(stand) || !EtherwarpHelper.isValidTarget(level, stand)) {
-                continue;
-            }
-            return new Plan(true, slot, yaw(look), pitch(look), i - from);
+    /** Ticks until the player lands, simulated from the vertical speed and the floor below. */
+    static double airTicksLeft(Minecraft client, LocalPlayer player) {
+        if (player.onGround()) {
+            return 0;
         }
-        return null;
-    }
-
-    /** Straight, level and free part of the path about one teleport long. */
-    private static Plan teleportPlan(Level level, LocalPlayer player, List<BetterBlockPos> positions,
-                                     int from, PathfinderConfig config, int slot, double reach) {
-        int feetY = player.blockPosition().getY();
-        Vec3 start = player.position();
-        for (int j = from + 1; j < positions.size(); j++) {
-            BetterBlockPos p = positions.get(j);
-            if (p.getY() != feetY) {
-                return null; // path changes height before a full teleport
-            }
-            double dx = p.getX() + 0.5 - start.x;
-            double dz = p.getZ() + 0.5 - start.z;
-            double dist = Math.sqrt(dx * dx + dz * dz);
-            if (dist < reach - 1.0) {
-                continue;
-            }
-            if (dist > reach + 0.6 || j - from < config.aotvMinGain) {
-                return null;
-            }
-            // every path point up to here must lie on the straight line
-            for (int k = from; k <= j; k++) {
-                BetterBlockPos q = positions.get(k);
-                if (distanceToLine(q.getX() + 0.5 - start.x, q.getZ() + 0.5 - start.z, dx / dist, dz / dist) > 0.8) {
-                    return null;
-                }
-            }
-            // Hypixel teleports exactly "reach" blocks along the look direction and refuses
-            // ("There are blocks in the way!") if anything solid is on the way: check that line.
-            double ux = dx / dist, uz = dz / dist;
-            if (!lineFree(level, start, ux, uz, reach + 0.5, feetY)) {
-                return null;
-            }
-            BlockPos landing = BlockPos.containing(start.x + ux * reach, feetY, start.z + uz * reach);
-            if (level.getBlockState(landing.below()).getCollisionShape(level, landing.below()).isEmpty()) {
-                return null; // nothing to stand on after the teleport
-            }
-            Vec3 look = new Vec3(dx, 0, dz);
-            return new Plan(false, slot, yaw(look), 0.0f, j - from);
-        }
-        return null;
-    }
-
-    private static double distanceToLine(double x, double z, double ux, double uz) {
-        return Math.abs(x * uz - z * ux);
-    }
-
-    /**
-     * Feet and head blocks along the teleport line are free. Only air and blocks you walk
-     * through and can build over (grass, snow layers ...) count as free: signs, flowers,
-     * buttons or carpets stop Hypixel's teleport even though they have no collision.
-     */
-    private static boolean lineFree(Level level, Vec3 start, double ux, double uz, double dist, int feetY) {
-        for (double t = 0.25; t <= dist; t += 0.25) {
-            int x = (int) Math.floor(start.x + ux * t);
-            int z = (int) Math.floor(start.z + uz * t);
-            for (int dy = 0; dy <= 1; dy++) {
-                BlockPos pos = new BlockPos(x, feetY + dy, z);
-                var state = level.getBlockState(pos);
-                boolean free = state.isAir()
-                        || (state.canBeReplaced() && state.getCollisionShape(level, pos).isEmpty()
-                        && state.getFluidState().isEmpty());
-                if (!free) {
-                    return false;
-                }
+        BlockPos feet = player.blockPosition();
+        double floor = Double.NaN;
+        for (int i = 0; i <= 40; i++) {
+            BlockPos below = feet.below(i);
+            if (!client.level.getBlockState(below).getCollisionShape(client.level, below).isEmpty()) {
+                floor = below.getY() + 1.0;
+                break;
             }
         }
-        return true;
+        if (Double.isNaN(floor)) {
+            return 0; // nothing below within reach: no teleport "down onto the floor"
+        }
+        double y = player.getY();
+        double v = player.getDeltaMovement().y;
+        double gravity = PathfinderTuning.stats().gravity();
+        for (int tick = 1; tick < 120; tick++) {
+            y += v;
+            v = (v - gravity) * 0.98;
+            if (y <= floor) {
+                return tick;
+            }
+        }
+        return 120;
     }
 
-    private static final java.util.regex.Pattern TELEPORT_BLOCKS =
-            java.util.regex.Pattern.compile("(?i)teleport\\s+(\\d+)\\s+blocks");
-
-    /** "Teleport 12 blocks ahead" from the item's lore (Transmission Tuners change it). */
-    static int teleportBlocks(ItemStack stack, int fallback) {
-        try {
-            var lore = stack.get(DataComponents.LORE);
-            if (lore != null) {
-                for (var line : lore.lines()) {
-                    java.util.regex.Matcher m = TELEPORT_BLOCKS.matcher(line.getString());
-                    if (m.find()) {
-                        int blocks = Integer.parseInt(m.group(1));
-                        if (blocks >= 4 && blocks <= 30) {
-                            return blocks;
-                        }
-                    }
-                }
-            }
-        } catch (RuntimeException ignored) {
+    private static WarpPlanner.Route better(WarpPlanner.Route current, Optional<WarpPlanner.Route> candidate,
+                                            double minSaving, double relative) {
+        if (candidate.isEmpty()) {
+            return current;
         }
-        return fallback;
+        WarpPlanner.Route r = candidate.get();
+        // clearly cheaper than walking: a fixed minimum and (on the ground) 15 % of the walk
+        if (r.saving() < minSaving || r.saving() < r.walkTicks() * relative) {
+            return current;
+        }
+        return current == null || r.ticks() < current.ticks() ? r : current;
+    }
+
+    // ================================================================ execution
+
+    private static void start(Minecraft client, LocalPlayer player, WarpPlanner.Route r) {
+        plannedInAir = !player.onGround();
+        route = r.hops();
+        hopIndex = 0;
+        if (previousSlot < 0) {
+            previousSlot = player.getInventory().getSelectedSlot();
+        }
+        next(Step.PREPARE);
+    }
+
+    private static WarpPlanner.Hop hop() {
+        return hopIndex < route.size() ? route.get(hopIndex) : null;
     }
 
     private static void runStep(Minecraft client, LocalPlayer player, IBaritone baritone) {
+        WarpPlanner.Hop hop = hop();
+        if (hop == null) {
+            finish(client, player, baritone, true);
+            return;
+        }
+        boolean ether = hop.kind() == WarpPlanner.Kind.ETHERWARP;
         stepTicks++;
+        if (step != Step.WAIT) {
+            steerServerRotation(baritone, player, hop);
+        }
         switch (step) {
             case PREPARE -> {
                 if (stepTicks == 1) {
-                    previousSlot = player.getInventory().getSelectedSlot();
-                    player.getInventory().setSelectedSlot(plan.slot());
-                    if (plan.etherwarp()) {
-                        client.options.keyShift.setDown(true);
-                        sneakOwned = true;
+                    slot = hotbarSlot(player, ether);
+                    if (slot < 0) {
+                        finish(client, player, baritone, false);
+                        return;
                     }
+                    player.getInventory().setSelectedSlot(slot);
+                    setSneak(client, ether);
                 }
-                // server needs a moment to see the new slot and the sneaking
-                if (stepTicks >= 3) {
+                // the server needs a moment to see the new slot and the sneaking
+                if (stepTicks >= (ether ? 3 : 2)) {
+                    next(hop.jumpFirst() && player.onGround() ? Step.JUMP : Step.AIM);
+                }
+            }
+            case JUMP -> {
+                if (stepTicks == 1) {
+                    jumpStartY = player.getY();
+                    client.options.keyJump.setDown(true);
+                    jumpOwned = true;
+                } else if (stepTicks >= 3) {
+                    releaseJump(client);
                     next(Step.AIM);
                 }
             }
             case AIM -> {
-                // The camera turns smoothly in frame() (like KillAura). Warp once it has been
-                // on target for a few ticks, so the server has the exact direction too.
-                if (aimError(player) < 1.5f) {
-                    alignedTicks++;
-                } else {
-                    alignedTicks = 0;
+                if (plannedInAir && player.onGround()) {
+                    // landed before the turn was done: the jump is over, walk on
+                    cancelQuietly(client, player, baritone);
+                    return;
                 }
-                if (alignedTicks >= 3 || stepTicks >= 40) {
+                // The camera turns smoothly in frame(). Warp once it has been on target for a
+                // moment, so the server has the exact direction too.
+                // the camera AND what the server last got must point there: the teleport goes
+                // where the server thinks we look
+                float error = Math.max(aimError(player, hop), serverAimError(baritone, player, hop));
+                boolean inAir = !player.onGround();
+                alignedTicks = error < (inAir ? 3.0f : 1.5f) ? alignedTicks + 1 : 0;
+                boolean ready = alignedTicks >= (inAir ? 1 : 2);
+                if (hop.jumpFirst()) {
+                    // teleport from the top of the jump; with strong Jump Boost already at
+                    // 3.5 blocks (the planner assumes at most 4)
+                    double risen = player.getY() - jumpStartY;
+                    ready &= player.getDeltaMovement().y <= 0.05 || risen >= 3.5;
+                }
+                if (ready) {
                     next(Step.USE);
+                } else if (stepTicks >= 30) {
+                    // never warp in a direction we did not reach: the old timeout did exactly
+                    // that and came out somewhere completely wrong
+                    System.out.println("[Pathfinder] Warp abgebrochen: Ausrichtung nicht erreicht");
+                    finish(client, player, baritone, false);
                 }
             }
             case USE -> {
-                aim(player); // only the last fraction of a degree
+                aimExact(player, hop);
                 startPos = player.position();
                 client.gameMode.useItem(player, InteractionHand.MAIN_HAND);
                 next(Step.WAIT);
             }
             case WAIT -> {
-                boolean moved = startPos != null && player.position().distanceTo(startPos) > 3.0;
-                if (moved || stepTicks >= 12) {
-                    finish(client, player, baritone, moved);
+                double moved = startPos == null ? 0 : player.position().distanceTo(startPos);
+                boolean arrived = player.position().distanceTo(hop.landing()) < 2.5;
+                if (moved > 2.0 && (arrived || stepTicks >= 3) || stepTicks >= 12) {
+                    boolean success = moved > 2.0;
+                    if (!success) {
+                        finish(client, player, baritone, false);
+                        return;
+                    }
+                    warps++;
+                    hopIndex++;
+                    if (hop() != null) {
+                        next(Step.PREPARE);
+                    } else {
+                        afterRoute(client, player, baritone, hop);
+                    }
                 }
             }
             default -> {
@@ -332,35 +432,93 @@ public final class AotvAssist {
         }
     }
 
-    private static int alignedTicks;
-    private static long lastFrameNanos;
-
-    private static float aimError(LocalPlayer player) {
-        return Math.max(Math.abs(net.minecraft.util.Mth.wrapDegrees(plan.yaw() - player.getYRot())),
-                Math.abs(plan.pitch() - player.getXRot()));
+    /**
+     * Route done. After a teleport the next one is planned at once (40 blocks straight = a few
+     * teleports in a row, no walking in between); otherwise Baritone takes over again.
+     */
+    private static void afterRoute(Minecraft client, LocalPlayer player, IBaritone baritone, WarpPlanner.Hop last) {
+        if (last.kind() == WarpPlanner.Kind.TELEPORT && chain < 6) {
+            Goal goal = baritone.getPathingBehavior().getGoal();
+            Mode mode = mode();
+            if (goal != null && teleportOn(mode) && !goal.isInGoal(player.blockPosition())) {
+                Optional<WarpPlanner.Route> again = plan(client, player, baritone, goal, Mode.TELEPORT, true);
+                if (again.isPresent()) {
+                    chain++;
+                    route = again.get().hops();
+                    hopIndex = 0;
+                    next(Step.PREPARE);
+                    return;
+                }
+            }
+        }
+        finish(client, player, baritone, true);
     }
 
-    /** Every frame while aiming: turn the camera smoothly towards the warp direction. */
+    private static float aimError(LocalPlayer player, WarpPlanner.Hop hop) {
+        float[] wanted = rotationTo(player, hop.aim());
+        return Math.max(Math.abs(net.minecraft.util.Mth.wrapDegrees(wanted[0] - player.getYRot())),
+                Math.abs(wanted[1] - player.getXRot()));
+    }
+
+    /**
+     * With Baritone's free look the server gets Baritone's (silent) rotation, not the camera:
+     * while walking that is the walking direction, maybe far from where the camera looks. Turn
+     * that rotation towards the warp too - through Baritone, so its turn limit applies and the
+     * server never sees a jump of 100+ degrees in one tick when the warp starts.
+     */
+    private static void steerServerRotation(IBaritone baritone, LocalPlayer player, WarpPlanner.Hop hop) {
+        if (!BaritoneAPI.getSettings().freeLook.value) {
+            return; // the server gets the camera rotation anyway
+        }
+        float[] wanted = rotationTo(player, hop.aim());
+        baritone.getLookBehavior().updateTarget(new Rotation(wanted[0], wanted[1]), false);
+    }
+
+    /** How far the rotation the server last received is from the warp direction. */
+    private static float serverAimError(IBaritone baritone, LocalPlayer player, WarpPlanner.Hop hop) {
+        Rotation server = baritone.getPlayerContext().playerRotations();
+        float[] wanted = rotationTo(player, hop.aim());
+        return Math.max(Math.abs(net.minecraft.util.Mth.wrapDegrees(wanted[0] - server.getYaw())),
+                Math.abs(wanted[1] - server.getPitch()));
+    }
+
+    private static float[] rotationTo(LocalPlayer player, Vec3 point) {
+        Vec3 look = point.subtract(player.getEyePosition());
+        double flat = Math.sqrt(look.x * look.x + look.z * look.z);
+        float yaw = (float) (Math.toDegrees(Math.atan2(look.z, look.x)) - 90.0);
+        float pitch = (float) Math.toDegrees(-Math.atan2(look.y, flat));
+        return new float[]{yaw, Math.clamp(pitch, -90.0f, 90.0f)};
+    }
+
+    private static float turnSpeed() {
+        return Math.clamp(pingplus.voicechat.client.PlayerSettings.combatRotationSpeed, 180f, 720f);
+    }
+
+    /** Every frame while preparing / aiming: turn the camera smoothly towards the warp direction. */
     public static void frame(Minecraft client) {
         long now = System.nanoTime();
         double dt = lastFrameNanos == 0 ? 0 : Math.min(0.05, (now - lastFrameNanos) / 1e9);
         lastFrameNanos = now;
         LocalPlayer player = client.player;
-        if (player == null || plan == null || (step != Step.AIM && step != Step.PREPARE)) {
+        WarpPlanner.Hop hop = hop();
+        if (player == null || hop == null
+                || (step != Step.AIM && step != Step.PREPARE && step != Step.JUMP)) {
             return;
         }
-        float speed = Math.clamp(pingplus.voicechat.client.PlayerSettings.combatRotationSpeed, 180f, 720f);
-        float yaw = pingplus.voicechat.client.AimSmoothing.step(player.getYRot(), plan.yaw(), speed, dt, 12.0);
-        float pitch = pingplus.voicechat.client.AimSmoothing.step(player.getXRot(), plan.pitch(), speed, dt, 12.0);
+        float[] wanted = rotationTo(player, hop.aim());
+        float speed = turnSpeed();
+        float yaw = pingplus.voicechat.client.AimSmoothing.step(player.getYRot(), wanted[0], speed, dt, 12.0);
+        float pitch = pingplus.voicechat.client.AimSmoothing.step(player.getXRot(), wanted[1], speed, dt, 12.0);
         player.setYRot(yaw);
         player.setXRot(pitch);
         player.setYHeadRot(yaw);
     }
 
-    private static void aim(LocalPlayer player) {
-        player.setYRot(plan.yaw());
-        player.setXRot(plan.pitch());
-        player.setYHeadRot(plan.yaw());
+    private static void aimExact(LocalPlayer player, WarpPlanner.Hop hop) {
+        float[] wanted = rotationTo(player, hop.aim());
+        player.setYRot(wanted[0]);
+        player.setXRot(wanted[1]);
+        player.setYHeadRot(wanted[0]);
     }
 
     private static void next(Step nextStep) {
@@ -372,11 +530,12 @@ public final class AotvAssist {
     private static void finish(Minecraft client, LocalPlayer player, IBaritone baritone, boolean success) {
         restore(client, player);
         step = Step.IDLE;
-        plan = null;
+        route = List.of();
+        hopIndex = 0;
+        chain = 0;
         long now = System.currentTimeMillis();
         if (success) {
-            warps++;
-            cooldownUntil = now + 1_200L;
+            cooldownUntil = now + 800L;
         } else {
             // no teleport: no mana, wrong item, blocked - do not spam it
             cooldownUntil = now + 6_000L;
@@ -388,25 +547,59 @@ public final class AotvAssist {
         }
     }
 
-    private static void restore(Minecraft client, LocalPlayer player) {
-        if (sneakOwned) {
+    private static void cancelQuietly(Minecraft client, LocalPlayer player, IBaritone baritone) {
+        restore(client, player);
+        step = Step.IDLE;
+        route = List.of();
+        hopIndex = 0;
+        chain = 0;
+        cooldownUntil = System.currentTimeMillis() + 300L;
+        try {
+            baritone.getPathingBehavior().forceCancel();
+        } catch (RuntimeException ignored) {
+        }
+    }
+
+    private static void setSneak(Minecraft client, boolean sneak) {
+        if (sneak && !sneakOwned) {
+            client.options.keyShift.setDown(true);
+            sneakOwned = true;
+        } else if (!sneak && sneakOwned) {
+            // a plain teleport while sneaking would be an etherwarp
             client.options.keyShift.setDown(false);
             sneakOwned = false;
             KeyMapping.setAll();
         }
+    }
+
+    private static void releaseJump(Minecraft client) {
+        if (jumpOwned) {
+            client.options.keyJump.setDown(false);
+            jumpOwned = false;
+        }
+    }
+
+    private static void restore(Minecraft client, LocalPlayer player) {
+        setSneak(client, false);
+        releaseJump(client);
         if (player != null && previousSlot >= 0) {
             player.getInventory().setSelectedSlot(previousSlot);
         }
         previousSlot = -1;
+        slot = -1;
     }
 
     private static void abort(Minecraft client) {
         if (step != Step.IDLE) {
             restore(client, client.player);
             step = Step.IDLE;
-            plan = null;
+            route = List.of();
+            hopIndex = 0;
+            chain = 0;
         }
     }
+
+    // ================================================================ items
 
     /** Hotbar slot of an Aspect of the End/Void (with Etherwarp if {@code etherwarp}). */
     static int hotbarSlot(LocalPlayer player, boolean etherwarp) {
@@ -433,12 +626,26 @@ public final class AotvAssist {
         }
     }
 
-    private static float yaw(Vec3 look) {
-        return (float) (Math.toDegrees(Math.atan2(look.z, look.x)) - 90.0);
-    }
+    private static final java.util.regex.Pattern TELEPORT_BLOCKS =
+            java.util.regex.Pattern.compile("(?i)teleport\\s+(\\d+)\\s+blocks");
 
-    private static float pitch(Vec3 look) {
-        double flat = Math.sqrt(look.x * look.x + look.z * look.z);
-        return (float) Math.toDegrees(-Math.atan2(look.y, flat));
+    /** "Teleport 12 blocks ahead" from the item's lore (Transmission Tuners change it). */
+    static int teleportBlocks(ItemStack stack, int fallback) {
+        try {
+            var lore = stack.get(DataComponents.LORE);
+            if (lore != null) {
+                for (var line : lore.lines()) {
+                    java.util.regex.Matcher m = TELEPORT_BLOCKS.matcher(line.getString());
+                    if (m.find()) {
+                        int blocks = Integer.parseInt(m.group(1));
+                        if (blocks >= 4 && blocks <= 30) {
+                            return blocks;
+                        }
+                    }
+                }
+            }
+        } catch (RuntimeException ignored) {
+        }
+        return fallback;
     }
 }

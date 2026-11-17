@@ -53,8 +53,20 @@ public class AhFlipperMod {
             new java.util.concurrent.ConcurrentHashMap<>();
     private static final java.util.Set<String> ACTIVE_LISTINGS =
             java.util.concurrent.ConcurrentHashMap.newKeySet();
-    private static final int AH_MAX_ACTIVE = 17;
     private static volatile int activeAuctionCount = -1;
+    /** When {@link #activeAuctionCount} was last read from the AH menu (co-op wide). */
+    private static volatile long menuCountAt;
+    /** Since when the AH is full (count at the slot limit), 0 while it is not. */
+    private static volatile long ahFullSince;
+    /**
+     * While the AH is full nothing is listed; only a collected sale frees a slot.
+     * After this long without one the count is checked again in the AH menu (a
+     * co-op member may have collected or cancelled auctions by hand).
+     */
+    private static final long AH_FULL_RECHECK_MS = 15 * 60_000L;
+    private static long lastCoopScanAt;
+    /** Changes on every start/stop, so flows of an earlier run notice they are stale. */
+    private static volatile int runGeneration;
     private static volatile boolean listingWorkerRunning;
     private static volatile long lastActiveCountRefreshAt;
     private static volatile boolean activeCountRefreshRunning;
@@ -203,6 +215,25 @@ public class AhFlipperMod {
             }
             watchdogScreens(client);
             long now = System.currentTimeMillis();
+            if (now - lastCoopScanAt > 1000L
+                    && client.gui.screen() instanceof AbstractContainerScreen<?> open) {
+                lastCoopScanAt = now;
+                String title = ScreenUtil.cleanName(open.getTitle().getString())
+                        .toLowerCase(java.util.Locale.ROOT);
+                if (AhScreenUtil.isRelevant(open)) {
+                    AhScreenUtil.scanCoopSellers(open);
+                }
+                if (title.contains("auction house")) {
+                    // Also when the player opens /ah himself: keeps the co-op wide count fresh.
+                    int owned = AhScreenUtil.ownedAuctionsShown(open);
+                    if (owned >= 0 && owned != activeAuctionCount) {
+                        applyMenuCount(owned);
+                    }
+                }
+                if (title.contains("co-op bazaar orders")) {
+                    AhScreenUtil.scanCoopOrderOwners(open);
+                }
+            }
             if (isBusy() && now - lastPriorityRefreshAt > 10_000L) {
                 lastPriorityRefreshAt = now;
                 ensureAhPriority();
@@ -452,6 +483,7 @@ public class AhFlipperMod {
             message("\u00a7cAH-Flipper can only start on Hypixel SkyBlock.");
             return;
         }
+        runGeneration++;
         running = true;
         recon = true;
         // First claim and list what waits in "View Bids", then start flipping.
@@ -470,12 +502,26 @@ public class AhFlipperMod {
     private record WonBid(String tag, String name, long value, long paid) {
     }
 
+    /**
+     * Abort check for a worker flow: true once the flipper was stopped (or stopped
+     * and started again) after the flow began. See {@link ScreenUtil#setAbortCheck}.
+     */
+    private static java.util.function.BooleanSupplier abortWhenStopped() {
+        int generation = runGeneration;
+        return () -> !running || runGeneration != generation;
+    }
+
     private static void startAfterBidClaim() {
         Thread thread = new Thread(() -> {
+            ScreenUtil.setAbortCheck(abortWhenStopped());
             try {
                 claimAndListBids();
+            } catch (ScreenUtil.AutomationAborted aborted) {
+                System.out.println("[AH-Flipper] Start-Claim abgebrochen (Flipper gestoppt).");
             } catch (Exception e) {
                 System.out.println("[AH-Flipper] Start-Claim Fehler: " + e);
+            } finally {
+                ScreenUtil.setAbortCheck(null);
             }
             if (!running) {
                 return;
@@ -666,6 +712,7 @@ public class AhFlipperMod {
 
     private static void stop() {
         running = false;
+        runGeneration++;
         recon = false;
         // PREMIUM-LOSS-FLIP: stop with the AH flipper.
         AhPremiumLossFlipper.stop();
@@ -724,7 +771,10 @@ public class AhFlipperMod {
         }
         long activity = AutomationGate.lastActivityAt();
         boolean automationActive = running || AhBidMacro.isRunning() || isTraderRunning();
-        if (!automationActive && (activity <= 0 || now - activity > 15_000L)) {
+        if (!automationActive && !isBusy()) {
+            // Everything is switched off and no flow holds the GUI: a menu that is
+            // open now was opened by the player and must stay open.
+            watchdogSince = now;
             return;
         }
         if (isBusy() || isBidPriorityActive()) {
@@ -845,7 +895,7 @@ public class AhFlipperMod {
             if (count >= 0) {
                 activeAuctionCount = count;
                 message("§6[AH-Flipper] §7Aktive Auktionen: §f" + count
-                        + "§7/§f" + AH_MAX_ACTIVE);
+                        + "§7/§f" + AhSlotLimit.limit());
                 ensureListingWorker();
             } else {
                 message("§cAktive Auktionen konnten nicht geladen werden.");
@@ -885,7 +935,7 @@ public class AhFlipperMod {
             listings = LISTING_QUEUE.size();
         }
         message("§7Listing-Queue: §f" + listings + " §7· Ungeclaimt: §f" + UNCLAIMED_PURCHASES.size()
-                + " §7· Aktive Auktionen: §f" + activeAuctionCount + "§7/§f" + AH_MAX_ACTIVE
+                + " §7· Aktive Auktionen: §f" + activeAuctionCount + "§7/§f" + AhSlotLimit.limit()
                 + (System.currentTimeMillis() < ahFullUntil ? " §c(AH voll)" : ""));
         long age = lastFlipAt > 0 ? (System.currentTimeMillis() - lastFlipAt) / 1000 : -1;
         message("§7Letzter Flip: §f" + (lastFlipId == null ? "-" : lastFlipId)
@@ -1035,6 +1085,7 @@ public class AhFlipperMod {
         }
         long now = System.currentTimeMillis();
         String lower = plain.toLowerCase(java.util.Locale.ROOT);
+        AhSlotLimit.onChat(plain);
         if (AUCTION_STARTED_CHAT.matcher(plain).matches()) {
             auctionStartedAt = now;
             activeAuctionCount = Math.max(0, activeAuctionCount) + 1;
@@ -1220,6 +1271,7 @@ public class AhFlipperMod {
     }
 
     private static void soldClaimWorker() {
+        ScreenUtil.setAbortCheck(abortWhenStopped());
         try {
             long deadline = System.currentTimeMillis() + 30000;
             while ((isBusy() || isBidPriorityActive()) && running
@@ -1246,10 +1298,13 @@ public class AhFlipperMod {
                 AutomationGate.release(lease);
                 releaseAhPriorityIfIdle();
             }
+        } catch (ScreenUtil.AutomationAborted aborted) {
+            System.out.println("[AH-Flipper] Sold-Claim abgebrochen (Flipper gestoppt).");
         } catch (Exception e) {
             System.out.println("[AH-Flipper] Sold-Claim fehlgeschlagen: " + e);
             message("§cSold claim failed: " + e.getMessage());
         } finally {
+            ScreenUtil.setAbortCheck(null);
             SOLD_CLAIM_PENDING.set(false);
         }
     }
@@ -1350,12 +1405,23 @@ public class AhFlipperMod {
             entry = AhScreenUtil.readAuctionsEntry();
         }
         if (entry.owned() >= 0) {
-            activeAuctionCount = entry.owned();
-            if (entry.owned() < AH_MAX_ACTIVE) {
-                ahFullUntil = 0;
-            }
+            applyMenuCount(entry.owned());
         }
         return entry;
+    }
+
+    /** "You own N auctions" counts the whole co-op: the most reliable count there is. */
+    private static void applyMenuCount(int owned) {
+        int before = activeAuctionCount;
+        activeAuctionCount = owned;
+        menuCountAt = System.currentTimeMillis();
+        AhSlotLimit.onOwnedCount(owned);
+        if (owned < AhSlotLimit.limit()) {
+            ahFullUntil = 0;
+            if (before >= AhSlotLimit.limit()) {
+                ensureListingWorker();
+            }
+        }
     }
 
     private static int waitForClaimEntryButton(long timeoutMs) {
@@ -2069,8 +2135,8 @@ public class AhFlipperMod {
                 LISTING_QUEUE.removeFirst();
             }
         }
-        if (activeAuctionCount >= AH_MAX_ACTIVE) {
-            message("\u00a7eAH full (" + activeAuctionCount + "/" + AH_MAX_ACTIVE + ") - item queued: \u00a7f"
+        if (activeAuctionCount >= AhSlotLimit.limit()) {
+            message("\u00a7eAH full (" + activeAuctionCount + "/" + AhSlotLimit.limit() + ") - item queued: \u00a7f"
                     + (name == null || name.isBlank() ? tag : name));
         }
         ensureListingWorker();
@@ -2142,7 +2208,23 @@ public class AhFlipperMod {
     private static void listingWorkerLoop() {
         try {
             while (running || hasFixedPriceListing()) {
-                if (isBidPriorityActive() || (running && activeAuctionCount >= AH_MAX_ACTIVE)) {
+                if (running && activeAuctionCount >= AhSlotLimit.limit()) {
+                    // AH full: listing is pointless until a sale is collected
+                    // (the sold-chat claim lowers the count and wakes this up).
+                    long now = System.currentTimeMillis();
+                    if (ahFullSince == 0) {
+                        ahFullSince = now;
+                        System.out.println("[AH-Flipper] AH voll (" + activeAuctionCount + "/"
+                                + AhSlotLimit.limit() + ") - Listing pausiert bis zum naechsten Verkauf.");
+                    } else if (now - ahFullSince > AH_FULL_RECHECK_MS && hasQueuedListing()) {
+                        ahFullSince = now;
+                        recheckFullAuctionHouse();
+                    }
+                    ScreenUtil.sleep(500);
+                    continue;
+                }
+                ahFullSince = 0;
+                if (isBidPriorityActive()) {
                     ScreenUtil.sleep(500);
                     continue;
                 }
@@ -2160,6 +2242,27 @@ public class AhFlipperMod {
         }
     }
 
+    private static boolean hasQueuedListing() {
+        synchronized (LISTING_QUEUE) {
+            return !LISTING_QUEUE.isEmpty();
+        }
+    }
+
+    /**
+     * Safety net while the AH stays full for a long time: collects ended auctions
+     * (which also reads the co-op wide count in the AH menu again). Nothing is listed.
+     */
+    private static void recheckFullAuctionHouse() {
+        if (!running || !SOLD_CLAIM_PENDING.compareAndSet(false, true)) {
+            return;
+        }
+        System.out.println("[AH-Flipper] AH seit " + (AH_FULL_RECHECK_MS / 60_000L)
+                + " Min. voll - pruefe Auktionen erneut.");
+        Thread thread = new Thread(AhFlipperMod::soldClaimWorker, "skycofl-ah-full-recheck");
+        thread.setDaemon(true);
+        thread.start();
+    }
+
     private static void refreshActiveAuctionCountAsync() {
         Minecraft client = Minecraft.getInstance();
         if (client.player == null || activeCountRefreshRunning) {
@@ -2171,8 +2274,30 @@ public class AhFlipperMod {
         Thread thread = new Thread(() -> {
             try {
                 int count = AhMarketData.activePlayerAuctionCount(uuid);
+                if (count >= 0 && AhSlotLimit.isCoop()) {
+                    // The slots are shared: add the running auctions of every known
+                    // co-op member.
+                    for (String member : AhSlotLimit.memberNames()) {
+                        String memberId = AhProtectedBidders.uuidOf(member);
+                        int theirs = memberId.isEmpty() ? -1 : AhMarketData.activePlayerAuctionCount(memberId);
+                        if (theirs > 0) {
+                            count += theirs;
+                        }
+                    }
+                }
                 if (count >= 0) {
-                    activeAuctionCount = count;
+                    // The API only knows running auctions, not sold ones that wait to
+                    // be collected (they still use a slot), and members whose name is
+                    // unknown are missing. In a co-op it is just a lower bound; the AH
+                    // menu's "You own N auctions" stays the real count. Solo, a fresh
+                    // menu count is still preferred over the (slightly lagging) API.
+                    if (AhSlotLimit.isCoop()) {
+                        if (count > activeAuctionCount) {
+                            activeAuctionCount = count;
+                        }
+                    } else if (System.currentTimeMillis() - menuCountAt > 60_000L) {
+                        activeAuctionCount = count;
+                    }
                     ensureListingWorker();
                 }
             } finally {
@@ -2340,7 +2465,7 @@ public class AhFlipperMod {
     }
 
     public static int maxActiveAuctions() {
-        return AH_MAX_ACTIVE;
+        return AhSlotLimit.limit();
     }
 
     public static void onFlip(CoflCore.commands.models.FlipData flip) {
@@ -2587,7 +2712,7 @@ public class AhFlipperMod {
 
     private static boolean processNextListing() {
         long now = System.currentTimeMillis();
-        if (isBidPriorityActive() || (running && activeAuctionCount >= AH_MAX_ACTIVE)
+        if (isBidPriorityActive() || (running && activeAuctionCount >= AhSlotLimit.limit())
                 || now < ahFullUntil || now < listingBlockedUntil) {
             return false;
         }
@@ -2612,6 +2737,10 @@ public class AhFlipperMod {
         ACTIVE_LISTINGS.add(key);
         ListResult result = ListResult.FAILED;
         boolean freedSlots = false;
+        boolean aborted = false;
+        // Lowballing (fixed price) listings also run while the flipper is off;
+        // flipper listings stop as soon as the flipper is switched off.
+        ScreenUtil.setAbortCheck(task.fixedPrice() > 0 ? null : abortWhenStopped());
         try {
             result = listPurchasedResult(task.tag, task.name, task.value,
                     task.boughtPrice, task.excludeUuid, task.fixedPrice, task.fixedPrice <= 0);
@@ -2624,9 +2753,13 @@ public class AhFlipperMod {
                     message("§aAuction House had no free slot - collected ended auctions.");
                 }
             }
+        } catch (ScreenUtil.AutomationAborted stopped) {
+            aborted = true;
+            System.out.println("[AH-Flipper] Listing abgebrochen (Flipper gestoppt): " + task.tag);
         } catch (Exception e) {
             System.out.println("[AH-Flipper] Listing-Fehler fuer " + task.tag + ": " + e);
         } finally {
+            ScreenUtil.setAbortCheck(null);
             ACTIVE_LISTINGS.remove(key);
             if (result == ListResult.LISTED) {
                 markListed(key);
@@ -2634,6 +2767,15 @@ public class AhFlipperMod {
             }
             AutomationGate.release(lease);
             releaseAhPriorityIfIdle();
+        }
+        if (result != ListResult.LISTED && task.fixedPrice() <= 0
+                && (aborted || !running)) {
+            // Stopped mid-listing: keep the item queued without counting a failed
+            // attempt; start() continues with it.
+            synchronized (LISTING_QUEUE) {
+                LISTING_QUEUE.addFirst(task);
+            }
+            return true;
         }
         switch (result) {
             case NO_ITEM, FAILED -> scheduleListingRetry(key, task, result);
@@ -3434,8 +3576,15 @@ public class AhFlipperMod {
                     return ListResult.FAILED;
                 }
                 if (AhScreenUtil.currentSlotHasText(create, "reached the maximum")) {
-                    ahFullUntil = System.currentTimeMillis() + 60_000L;
-                    activeAuctionCount = Math.max(activeAuctionCount, AH_MAX_ACTIVE);
+                    long nowMs = System.currentTimeMillis();
+                    if (nowMs - menuCountAt < 15_000L && activeAuctionCount > 0) {
+                        // The owned count read a moment ago is exactly the limit.
+                        AhSlotLimit.onMaximumReached(activeAuctionCount);
+                    }
+                    // No new attempt until a sale is collected (clears this) or,
+                    // as a safety net, after AH_FULL_RECHECK_MS.
+                    ahFullUntil = nowMs + AH_FULL_RECHECK_MS;
+                    activeAuctionCount = Math.max(activeAuctionCount, AhSlotLimit.limit());
                     System.out.println("[AH-Flipper] Hypixel: maximale Anzahl Auktionen erreicht.");
                     warnListing("§eAuction House full - listing waits for a free slot.");
                     return ListResult.AH_FULL;
@@ -4270,6 +4419,7 @@ public class AhFlipperMod {
     }
 
     static boolean sendCommandSilent(String command) {
+        ScreenUtil.checkAbort();
         Minecraft client = Minecraft.getInstance();
         if (client.getConnection() == null) {
             message("§cNicht verbunden.");

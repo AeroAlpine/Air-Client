@@ -3,6 +3,7 @@ package com.coflnet.pathing;
 import baritone.api.pathing.goals.Goal;
 import baritone.api.pathing.goals.GoalNear;
 import baritone.api.utils.BetterBlockPos;
+import baritone.api.utils.interfaces.IGoalRenderPos;
 import it.unimi.dsi.fastutil.longs.LongOpenHashSet;
 import net.minecraft.core.BlockPos;
 import net.minecraft.world.entity.Entity;
@@ -19,7 +20,7 @@ import net.minecraft.world.phys.Vec3;
  * client thread (line of sight needs the world); Baritone's thread only does
  * set lookups.
  */
-public final class VisibleGoal implements Goal {
+public final class VisibleGoal implements Goal, IGoalRenderPos {
     private static final double EYE = 1.62;
 
     private final GoalNear near;
@@ -138,6 +139,12 @@ public final class VisibleGoal implements Goal {
         BlockHitResult hit = level.clip(new ClipContext(eye, aim, ClipContext.Block.COLLIDER,
                 ClipContext.Fluid.NONE, target));
         return hit.getType() == HitResult.Type.MISS;
+    }
+
+    /** The target's block: where the warp planner heads for. */
+    @Override
+    public BlockPos getGoalPos() {
+        return center;
     }
 
     @Override

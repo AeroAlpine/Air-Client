@@ -309,3 +309,10 @@ tasks.register('pathfinderLogicTest', JavaExec) {
     javaLauncher = javaToolchains.launcherFor { languageVersion = JavaLanguageVersion.of(25) }
 }
 tasks.named('check') { dependsOn 'pathfinderLogicTest' }
+tasks.register('walkSearchTest', JavaExec) {
+    dependsOn voiceTestClasses, clientClasses
+    classpath = sourceSets.voiceTest.runtimeClasspath
+    mainClass = 'com.coflnet.pathing.WalkSearchTest'
+    javaLauncher = javaToolchains.launcherFor { languageVersion = JavaLanguageVersion.of(25) }
+}
+tasks.named('check') { dependsOn 'walkSearchTest' }

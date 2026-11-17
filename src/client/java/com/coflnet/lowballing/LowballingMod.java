@@ -629,6 +629,11 @@ public final class LowballingMod {
         releaseForward();
         LowballingNavigator.stop();
         LowballingChat.clearWarp();
+        // Forget the last trade partner: resolveTarget() prefers targetUuid, so the
+        // previous player was walked to and right-clicked as the "Hub Selector".
+        targetUuid = null;
+        targetEntity = null;
+        targetName = "";
         setState(State.FIND_SELECTOR);
         debug("Suche " + CONFIG.hubSelectorName);
     }
@@ -1240,7 +1245,9 @@ public final class LowballingMod {
             enterHubMenu();
             return;
         }
-        Entity selector = resolveTarget();
+        // Only the entity named like the selector - never resolveTarget(), which
+        // prefers the UUID of a player (trade partner).
+        Entity selector = selectorEntity();
         if (selector == null) {
             enterFindSelector();
             return;
@@ -3129,6 +3136,15 @@ public final class LowballingMod {
         if (forwardOwned) {
             setForward(false);
         }
+    }
+
+    private static Entity selectorEntity() {
+        String wanted = CONFIG.hubSelectorName.toLowerCase(Locale.ROOT);
+        if (targetEntity != null && targetEntity.isAlive() && !targetEntity.isRemoved()
+                && targetEntity.getName().getString().toLowerCase(Locale.ROOT).contains(wanted)) {
+            return targetEntity;
+        }
+        return findEntity(CONFIG.hubSelectorName);
     }
 
     private static boolean selectorGone() {
