@@ -55,6 +55,22 @@ public final class FollowFeature {
     private static boolean directChase;
     /** We hold the forward key ourselves during a direct chase. */
     private static boolean pressingForward;
+    private static boolean pressingSprint;
+    /** The wanted camera direction after its glide (see frame()). */
+    private static float glideYaw;
+    private static float glidePitch;
+    private static boolean glideValid;
+    /** The look follows the path (walking): the only time the view may wobble a little. */
+    private static boolean walkingLook;
+    private static final double wobblePhaseA = ThreadLocalRandom.current().nextDouble(0, Math.PI * 2);
+    private static final double wobblePhaseB = ThreadLocalRandom.current().nextDouble(0, Math.PI * 2);
+    private static long nextGlanceAt = System.currentTimeMillis() + 5_000L;
+    private static long glanceFrom;
+    private static long glanceUntil;
+    private static float glanceYaw;
+    /** Camera as this feature left it last frame: anything else moving it shows up as a difference. */
+    private static float lastCameraYaw;
+    private static float lastCameraPitch;
     private static final int HIDDEN_SWITCH_TICKS = 10;
     /** Ticks between searches while no target is around. */
     private static final int SEARCH_RETRY_TICKS = 4;
@@ -68,7 +84,6 @@ public final class FollowFeature {
     private static boolean idleLooking;
     /** Filtered look point while walking, and whether the camera is in the middle of a turn. */
     private static net.minecraft.world.phys.Vec3 smoothLook;
-    private static boolean turning;
     /** The next targets, picked ahead: nearest to the current target, then nearest to that one. */
     private static final int QUEUE_SIZE = 2;
     private static final int QUEUE_REFRESH_TICKS = 10;
@@ -323,11 +338,14 @@ public final class FollowFeature {
      */
     private static void updateLook(Minecraft client, LocalPlayer player, IBaritone baritone,
                                    Entity target, boolean attacking) {
+        walkingLook = false;
         if (attacking && KillAuraFeature.hasTarget()) {
             hasLook = false;
             return;
         }
-        if (System.currentTimeMillis() - lastSwitchAt < 450) {
+        // one-hit mode: on to the next mob quickly, zack zack
+        long turnToNewTarget = PlayerSettings.combatOneHit ? 250 : 450;
+        if (System.currentTimeMillis() - lastSwitchAt < turnToNewTarget) {
             // Just picked a new target: turn towards it while the new path is planned, like a
             // player who spots the next mob, instead of following the old path's direction.
             smoothLook = null;
@@ -341,8 +359,16 @@ public final class FollowFeature {
             // Low-pass the look point: the camera follows the course of the path, not every
             // block of it (that was the left-right-left twitching on diagonal paths).
             smoothLook = smoothLook == null ? ahead : smoothLook.lerp(ahead, com.coflnet.pathing.MovementStyle.lookBlend());
-            setLook(player, smoothLook);
+            net.minecraft.world.phys.Vec3 look = smoothLook;
+            if (player.hasLineOfSight(target)) {
+                // a player keeps an eye on the mob he walks to: a fifth of the way towards it
+                net.minecraft.world.phys.Vec3 at = new net.minecraft.world.phys.Vec3(target.getX(),
+                        target instanceof LivingEntity living ? living.getEyeY() : target.getY(), target.getZ());
+                look = look.lerp(at, 0.2);
+            }
+            setLook(player, look);
             keepNearWalkingDirection(baritone);
+            walkingLook = true;
             return;
         }
         smoothLook = null;
@@ -412,27 +438,76 @@ public final class FollowFeature {
         lastFrameNanos = now;
         LocalPlayer player = client.player;
         if ((!active && !idleLooking) || !hasLook || player == null || client.gui.screen() != null) {
+            glideValid = false; // start the next glide from where the camera really is
             return;
         }
         float speed = (float) (Math.clamp(PlayerSettings.combatRotationSpeed, 30.0f, 1080.0f)
                 * com.coflnet.pathing.MovementStyle.turnSpeedFactor());
         double rate = com.coflnet.pathing.MovementStyle.easeRate();
-        float yawDelta = Math.abs(net.minecraft.util.Mth.wrapDegrees(lookYaw - player.getYRot()));
-        float pitchDelta = Math.abs(lookPitch - player.getXRot());
-        // Dead zone with hysteresis: a small difference does not start a turn (no constant
-        // micro corrections), but a started turn is finished properly.
-        double deadzone = com.coflnet.pathing.MovementStyle.deadzoneDegrees();
-        if (!turning && Math.max(yawDelta, pitchDelta) > deadzone) {
-            turning = true;
-        } else if (turning && Math.max(yawDelta, pitchDelta) < 0.6f) {
-            turning = false;
+        // Two smooth stages instead of the old dead zone (wait until 5 degrees off, then turn
+        // fast, then stop - that start/stop was the jerky camera): the wanted direction itself
+        // glides (~0.25 s), and the camera eases continuously after it.
+        boolean movedByOthers = glideValid
+                && (Math.abs(net.minecraft.util.Mth.wrapDegrees(player.getYRot() - lastCameraYaw)) > 2.0f
+                || Math.abs(player.getXRot() - lastCameraPitch) > 2.0f);
+        if (!glideValid || movedByOthers) {
+            // first frame, or a warp / KillAura turned the camera: glide on from there
+            glideYaw = player.getYRot();
+            glidePitch = player.getXRot();
+            glideValid = true;
         }
-        if (!turning) {
-            return;
+        boolean quick = PlayerSettings.combatOneHit && System.currentTimeMillis() - lastSwitchAt < 600;
+        double glide = 1.0 - Math.exp(-dt / (quick ? 0.1 : 0.25));
+        float[] wobble = wobble(quick);
+        float wantYaw = lookYaw + wobble[0];
+        float wantPitch = Math.clamp(lookPitch + wobble[1], -60.0f, 60.0f);
+        glideYaw += (float) (net.minecraft.util.Mth.wrapDegrees(wantYaw - glideYaw) * glide);
+        glidePitch += (float) ((wantPitch - glidePitch) * glide);
+        if (quick) {
+            speed *= 1.6f;
         }
-        player.setYRot(AimSmoothing.step(player.getYRot(), lookYaw, speed, dt, rate));
-        player.setXRot(Math.clamp(AimSmoothing.step(player.getXRot(), lookPitch, speed, dt, rate), -90.0f, 90.0f));
-        player.setYHeadRot(player.getYRot());
+        float yawDelta = Math.abs(net.minecraft.util.Mth.wrapDegrees(glideYaw - player.getYRot()));
+        float pitchDelta = Math.abs(glidePitch - player.getXRot());
+        if (Math.max(yawDelta, pitchDelta) >= 0.15f) { // below: close enough, no micro jitter
+            player.setYRot(AimSmoothing.step(player.getYRot(), glideYaw, speed, dt, rate));
+            player.setXRot(Math.clamp(AimSmoothing.step(player.getXRot(), glidePitch, speed, dt, rate), -90.0f, 90.0f));
+            player.setYHeadRot(player.getYRot());
+        }
+        lastCameraYaw = player.getYRot();
+        lastCameraPitch = player.getXRot();
+    }
+
+    /**
+     * A little life in the view while walking: a slow drift of a few degrees (two overlaid
+     * waves, never the same twice) and now and then a short glance to the side. Off on hard path
+     * parts, right after a target switch and while fighting.
+     */
+    private static float[] wobble(boolean quick) {
+        long nowMs = System.currentTimeMillis();
+        if (!walkingLook || quick || com.coflnet.pathing.PathDifficulty.isHard()
+                || com.coflnet.pathing.AotvAssist.isBusy()) {
+            glanceUntil = 0;
+            return new float[]{0, 0};
+        }
+        double t = System.nanoTime() / 1e9;
+        float yaw = (float) (2.6 * Math.sin(t * 0.83 + wobblePhaseA) + 1.3 * Math.sin(t * 2.1 + wobblePhaseB));
+        float pitch = (float) (1.5 * Math.sin(t * 0.61 + wobblePhaseB));
+        if (glanceUntil == 0 && nowMs >= nextGlanceAt) {
+            ThreadLocalRandom random = ThreadLocalRandom.current();
+            glanceFrom = nowMs;
+            glanceUntil = nowMs + random.nextLong(550, 850);
+            glanceYaw = (float) (random.nextBoolean() ? 1 : -1) * (float) random.nextDouble(10.0, 18.0);
+            nextGlanceAt = glanceUntil + random.nextLong(4_000, 9_000);
+        }
+        if (glanceUntil != 0) {
+            if (nowMs >= glanceUntil) {
+                glanceUntil = 0;
+            } else {
+                double progress = (nowMs - glanceFrom) / (double) (glanceUntil - glanceFrom);
+                yaw += glanceYaw * (float) Math.sin(Math.PI * progress);
+            }
+        }
+        return new float[]{yaw, pitch};
     }
 
     private static double effectiveDistance(LocalPlayer player, Entity entity) {
@@ -560,8 +635,8 @@ public final class FollowFeature {
         double stopAt = Math.max(1.5, reach - 0.5);
         float yawTo = (float) (Math.toDegrees(Math.atan2(dz, dx)) - 90.0);
         float off = Math.abs(net.minecraft.util.Mth.wrapDegrees(yawTo - player.getYRot()));
-        boolean forward = Math.sqrt(dx * dx + dz * dz) > stopAt && off < 45.0f
-                && client.gui.screen() == null;
+        double distance = Math.sqrt(dx * dx + dz * dz);
+        boolean forward = distance > stopAt && off < 45.0f && client.gui.screen() == null;
         if (forward) {
             // every tick: opening a menu releases all keys
             client.options.keyUp.setDown(true);
@@ -569,6 +644,16 @@ public final class FollowFeature {
             client.options.keyUp.setDown(false);
         }
         pressingForward = forward;
+        // sprint the last metres too (it only walked before); stop sprinting right before
+        // the mob so we do not run past it
+        boolean sprint = forward && distance > stopAt + 1.5 && off < 30.0f;
+        if (sprint) {
+            client.options.keySprint.setDown(true);
+        } else if (pressingSprint) {
+            client.options.keySprint.setDown(false);
+            player.setSprinting(false);
+        }
+        pressingSprint = sprint;
     }
 
     private static void endDirectChase(Minecraft client) {
@@ -580,6 +665,10 @@ public final class FollowFeature {
         if (pressingForward) {
             client.options.keyUp.setDown(false);
             pressingForward = false;
+        }
+        if (pressingSprint) {
+            client.options.keySprint.setDown(false);
+            pressingSprint = false;
         }
     }
 

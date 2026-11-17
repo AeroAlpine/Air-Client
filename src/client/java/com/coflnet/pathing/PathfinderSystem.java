@@ -93,6 +93,9 @@ public final class PathfinderSystem {
             return;
         }
         PathRecorder.tick(client, baritone, now);
+        if (tickCounter % 5 == 0) {
+            PathDifficulty.update(client.level, baritone);
+        }
         AotvAssist.tick(client, baritone);
         if (AotvAssist.isBusy()) {
             DETECTOR.reset(); // the warp itself looks like a setback

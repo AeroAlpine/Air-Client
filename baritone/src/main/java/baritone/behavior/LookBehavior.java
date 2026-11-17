@@ -65,7 +65,7 @@ public final class LookBehavior extends Behavior implements ILookBehavior {
 
     @Override
     public void updateTarget(Rotation rotation, boolean blockInteract) {
-        this.target = new Target(rotation, Target.Mode.resolve(ctx, blockInteract));
+        this.target = new Target(rotation, Target.Mode.resolve(ctx, blockInteract), blockInteract);
     }
 
     @Override
@@ -162,6 +162,13 @@ public final class LookBehavior extends Behavior implements ILookBehavior {
         }
         Rotation from = this.serverRotation != null ? this.serverRotation : ctx.playerRotations();
         float delta = net.minecraft.util.Mth.wrapDegrees(wanted.getYaw() - from.getYaw());
+        float smoothing = Baritone.settings().moveYawSmoothing.value;
+        if (smoothing > 0 && smoothing < 1 && !suspendSmoothing && !this.target.blockInteract
+                && Math.abs(delta) < 50f) {
+            // Air Client: follow the course, not every block centre (see moveYawSmoothing)
+            delta *= smoothing;
+            return new Rotation(from.getYaw() + delta, wanted.getPitch());
+        }
         if (Math.abs(delta) <= max) {
             return wanted;
         }
@@ -173,6 +180,12 @@ public final class LookBehavior extends Behavior implements ILookBehavior {
      * Air Client: the yaw the player will really move with this tick when Baritone wants
      * {@code wanted} - the turn limit can keep it a few ticks behind.
      */
+    /**
+     * Air Client: set while a warp aims through this behaviour - it must reach the exact
+     * direction quickly, without the walking smoothing.
+     */
+    public static volatile boolean suspendSmoothing;
+
     public float plannedMoveYaw(Rotation wanted) {
         return limitTurn(this.processor.peekRotation(wanted)).getYaw();
     }
@@ -337,10 +350,12 @@ public final class LookBehavior extends Behavior implements ILookBehavior {
 
         public final Rotation rotation;
         public final Mode mode;
+        public final boolean blockInteract;
 
-        public Target(Rotation rotation, Mode mode) {
+        public Target(Rotation rotation, Mode mode, boolean blockInteract) {
             this.rotation = rotation;
             this.mode = mode;
+            this.blockInteract = blockInteract;
         }
 
         enum Mode {

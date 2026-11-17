@@ -15,6 +15,7 @@ import java.time.LocalDateTime;
 import java.time.format.DateTimeFormatter;
 import java.util.ArrayList;
 import java.util.Comparator;
+import java.util.HashMap;
 import java.util.HashSet;
 import java.util.List;
 import java.util.Set;
@@ -29,6 +30,16 @@ public final class AhBidMacro {
     private static final long RECENT_TTL_MS = 10 * 60_000L;
     private static final Map<String, Tracked> TRACKED = new ConcurrentHashMap<>();
     private static final Map<String, Long> RECENT = new ConcurrentHashMap<>();
+    /**
+     * Auctions the detailed valuation rejected, with the bid they were checked at. The same
+     * auction at the same bid is not analysed again for a while: before, the same few
+     * unprofitable auctions (Guardian pet 397 times a day) used up the analysis budget of every
+     * scan and new, good auctions were never looked at.
+     */
+    private static final Map<String, long[]> REJECTED_AT_BID = new ConcurrentHashMap<>();
+    private static final long REJECTED_TTL_MS = 10 * 60_000L;
+    /** Auctions of one item type analysed per scan (was 1: one bad pet hid all others). */
+    private static final int PER_TAG = 3;
     private static final Map<String, String> REBID_COMMANDS = new ConcurrentHashMap<>();
     private static final Map<String, Integer> REBID_ATTEMPTS = new ConcurrentHashMap<>();
     private static final List<ScoredCandidate> PENDING_BIDS = new ArrayList<>();
@@ -179,6 +190,7 @@ public final class AhBidMacro {
         running = true;
         lastScanAt = 0;
         REBID_COMMANDS.clear();
+        REBID_DUE.clear();
         PENDING_BIDS.clear();
         pendingBidWork = false;
         System.out.println("[AH-Flipper] Bid-Macro gestartet (SkyBlock="
@@ -204,6 +216,7 @@ public final class AhBidMacro {
         PENDING_BIDS.clear();
         pendingBidWork = false;
         REBID_COMMANDS.clear();
+        REBID_DUE.clear();
         REBID_ATTEMPTS.clear();
         AhFlipperMod.clearBidPriority();
         Thread thread = worker;
@@ -221,7 +234,7 @@ public final class AhBidMacro {
                     continue;
                 }
                 long now = System.currentTimeMillis();
-                if (outbidCheckPending || !REBID_COMMANDS.isEmpty()) {
+                if (rebidDueWithin(1_500L) || (outbidCheckPending && REBID_COMMANDS.isEmpty())) {
                     // Keep the bid priority alive while we wait: the running
                     // task may finish, but no new listing/claim/buy may start
                     // before the outbid is handled.
@@ -240,15 +253,17 @@ public final class AhBidMacro {
                 }
                 int maxBids = Math.max(1, Math.min(15,
                         AhFlipperMod.CONFIG.bidMacroMaxBidsPerScan));
-                if (!REBID_COMMANDS.isEmpty()) {
+                // only rebids whose cooldown is over hold up the loop; one that waits a
+                // minute (auction still runs for hours) lets the scan go on meanwhile
+                if (rebidDueWithin(0L)) {
                     if (now < rebidNotBefore) {
-                        ScreenUtil.sleep(100);
+                        ScreenUtil.sleep(Math.min(100L, Math.max(1L, rebidNotBefore - now)));
                         continue;
                     }
                     processPendingRebids(maxBids);
                     rebidRequested = false;
-                    if (!REBID_COMMANDS.isEmpty()) {
-                        ScreenUtil.sleep(100);
+                    if (rebidDueWithin(0L)) {
+                        ScreenUtil.sleep(nearestRebidWaitMs());
                         continue;
                     }
                 }
@@ -273,8 +288,8 @@ public final class AhBidMacro {
                         scanNew(Math.max(0, maxBids - rebids));
                     }
                 }
-                ScreenUtil.sleep(AhFlipperMod.isBidPriorityActive()
-                        || rebidRequested ? 50 : 100);
+                ScreenUtil.sleep(Math.min(nearestRebidWaitMs(), AhFlipperMod.isBidPriorityActive()
+                        || rebidRequested ? 50 : 100));
             } catch (Exception e) {
                 System.out.println("[AH-Flipper] Bid-Macro Fehler: " + e.getMessage());
                 e.printStackTrace();
@@ -316,6 +331,7 @@ public final class AhBidMacro {
                     TRACKED.remove(lost.uuid);
                 }
                 REBID_COMMANDS.remove(uuidKey(uuid));
+                REBID_DUE.remove(uuidKey(uuid));
                 REBID_ATTEMPTS.remove(uuidKey(uuid));
                 remember(dashedUuid(uuid));
             }
@@ -326,23 +342,30 @@ public final class AhBidMacro {
             return;
         }
         lastOutbidAt = now;
-        rebidRequested = true;
         outbidCheckPending = true;
         rebidNotBefore = now;
-        AhFlipperMod.requestBidPriority(20_000L);
         String clickCommand = findRunCommand(message);
         String clickUuid = uuidFromCommand(clickCommand);
+        boolean soon = true;
         if (!clickUuid.isBlank()) {
             Tracked outbid = trackedFor(clickUuid);
             if (outbid != null && !outbid.refunded) {
                 ProfitTracker.receive(ProfitTracker.AH, outbid.bid);
                 outbid.refunded = true;
             }
-            AhFlipperMod.requestBidPriority(20_000L);
-            AhFlipperMod.closeGuiForBidPriority();
+            REBID_DUE.remove(uuidKey(clickUuid)); // a new outbid: a new cooldown
+            soon = rebidDue(clickUuid) - now <= 1_500L;
             REBID_COMMANDS.put(clickUuid, clickCommand);
             REBID_ATTEMPTS.remove(clickUuid);
             AhMarketData.invalidateAuction(clickUuid);
+        }
+        if (soon) {
+            // rebid right away (end of the auction near, or cooldown off): take the GUI now
+            rebidRequested = true;
+            AhFlipperMod.requestBidPriority(20_000L);
+            if (!clickUuid.isBlank()) {
+                AhFlipperMod.closeGuiForBidPriority();
+            }
         }
         System.out.println("[AH-Flipper] Outbid-Chat erkannt: " + message.getString()
                 + (clickCommand.isBlank() ? "" : " -> " + clickCommand));
@@ -362,6 +385,7 @@ public final class AhBidMacro {
             TRACKED.remove(tracked.uuid);
         }
         REBID_COMMANDS.remove(uuidKey(uuid));
+        REBID_DUE.remove(uuidKey(uuid));
         REBID_ATTEMPTS.remove(uuidKey(uuid));
         remember(uuid);
         System.out.println("[AH-Flipper] Dont-outbid-Spieler ist Highest-Bidder - kein Gebot: "
@@ -460,7 +484,19 @@ public final class AhBidMacro {
     }
 
     private static boolean rebidWaiting() {
-        return !REBID_COMMANDS.isEmpty() || rebidRequested;
+        return rebidRequested || rebidDueWithin(1_500L);
+    }
+
+    /** Milliseconds until the next rebid is due (100 when none waits), at least 1. */
+    private static long nearestRebidWaitMs() {
+        long now = System.currentTimeMillis();
+        long best = 100L;
+        for (String key : REBID_COMMANDS.keySet()) {
+            Long due = REBID_DUE.get(uuidKey(key));
+            long wait = due == null ? 0 : due - now;
+            best = Math.min(best, Math.max(1L, wait));
+        }
+        return best;
     }
 
     private static int processTracked(int maxBids) {
@@ -506,6 +542,7 @@ public final class AhBidMacro {
                 }
                 if (own) {
                     REBID_COMMANDS.remove(uuidKey(tracked.uuid));
+                    REBID_DUE.remove(uuidKey(tracked.uuid));
                     continue;
                 }
                 if (AhProtectedBidders.isProtectedBidder(details.highestBidder)) {
@@ -513,15 +550,21 @@ public final class AhBidMacro {
                     continue;
                 }
                 if (highest <= tracked.bid) {
+                    REBID_DUE.remove(uuidKey(tracked.uuid));
                     REBID_COMMANDS.remove(uuidKey(tracked.uuid));
+                    REBID_DUE.remove(uuidKey(tracked.uuid));
                     continue;
                 }
                 if (details.end > 0
                         && details.end <= System.currentTimeMillis() + 3000L) {
                     continue;
                 }
+                if (rebidDue(tracked.uuid) > System.currentTimeMillis()) {
+                    continue; // outbid, but its cooldown is not over yet
+                }
                 if (tryBid(details, true, null, true)) {
                     rebids++;
+                    REBID_DUE.remove(uuidKey(tracked.uuid));
                     tracked.value = Math.max(tracked.value, 0);
                 } else if (recentlyRejected(tracked.uuid)) {
                     TRACKED.remove(tracked.uuid);
@@ -547,18 +590,23 @@ public final class AhBidMacro {
             if (!running || bids >= maxBids || AhFlipperMod.isBusy()) {
                 break;
             }
+            if (rebidDue(entry.getKey()) > System.currentTimeMillis()) {
+                continue; // still in its cooldown
+            }
             Tracked tracked = trackedFor(entry.getKey());
             AhMarketData.AuctionDetails details = tracked != null
                     ? syntheticDetails(tracked)
                     : chatDetails(entry.getKey());
             if (details == null) {
                 REBID_COMMANDS.remove(entry.getKey());
+                REBID_DUE.remove(uuidKey(entry.getKey()));
                 REBID_ATTEMPTS.remove(entry.getKey());
                 continue;
             }
             if (details.bin || (details.end > 0 && details.end <= System.currentTimeMillis())
                     || AhFlipperMod.isOwnSeller(details.highestBidder, "")) {
                 REBID_COMMANDS.remove(entry.getKey());
+                REBID_DUE.remove(uuidKey(entry.getKey()));
                 REBID_ATTEMPTS.remove(entry.getKey());
                 continue;
             }
@@ -568,11 +616,13 @@ public final class AhBidMacro {
             }
             if (recentlyRejected(details.uuid) || RECENT.containsKey(entry.getKey())) {
                 REBID_COMMANDS.remove(entry.getKey());
+                REBID_DUE.remove(uuidKey(entry.getKey()));
                 REBID_ATTEMPTS.remove(entry.getKey());
                 continue;
             }
             if (!rebidStillProfitable(details, tracked)) {
                 REBID_COMMANDS.remove(entry.getKey());
+                REBID_DUE.remove(uuidKey(entry.getKey()));
                 REBID_ATTEMPTS.remove(entry.getKey());
                 remember(details.uuid);
                 continue;
@@ -580,10 +630,12 @@ public final class AhBidMacro {
             if (tryBid(details, true, null, true, true)) {
                 bids++;
                 REBID_ATTEMPTS.remove(entry.getKey());
+                REBID_DUE.remove(uuidKey(entry.getKey()));
             } else {
                 if (recentlyRejected(details.uuid)
                         || RECENT.containsKey(entry.getKey())) {
                     REBID_COMMANDS.remove(entry.getKey());
+                    REBID_DUE.remove(uuidKey(entry.getKey()));
                     REBID_ATTEMPTS.remove(entry.getKey());
                     System.out.println("[AH-Flipper] Outbid verworfen (nicht profitabel/blockiert): "
                             + entry.getKey());
@@ -592,6 +644,7 @@ public final class AhBidMacro {
                 int attempts = REBID_ATTEMPTS.merge(entry.getKey(), 1, Integer::sum);
                 if (attempts >= MAX_REBID_ATTEMPTS) {
                     REBID_COMMANDS.remove(entry.getKey());
+                    REBID_DUE.remove(uuidKey(entry.getKey()));
                     REBID_ATTEMPTS.remove(entry.getKey());
                     remember(details.uuid);
                     System.out.println("[AH-Flipper] Outbid-Retry aufgegeben nach "
@@ -604,8 +657,8 @@ public final class AhBidMacro {
                 }
             }
         }
-        if (REBID_COMMANDS.isEmpty()) {
-            AhFlipperMod.clearBidPriority();
+        if (!rebidDueWithin(1_500L)) {
+            AhFlipperMod.clearBidPriority(); // nothing due soon: the AH flipper may go on
         }
         return bids;
     }
@@ -688,6 +741,12 @@ public final class AhBidMacro {
         int skipNoMarket = 0;
         int skipVolume = 0;
         int skipBid = 0;
+        int skipCheap = 0;
+        int skipRejected = 0;
+        REJECTED_AT_BID.entrySet().removeIf(e -> now - e.getValue()[1] > REJECTED_TTL_MS);
+        // The detailed valuation can add addons, so cut only clearly cheaper items here.
+        long minValue = Math.max(0L, AhFlipperMod.CONFIG.bidMacroMinValueCoins);
+        long cheapBelow = (long) (minValue * 0.7);
         for (AhMarketData.ActiveAuction auction : auctions) {
             if (rebidWaiting()) {
                 return;
@@ -733,10 +792,20 @@ public final class AhBidMacro {
                 skipNoMarket++;
                 continue;
             }
+            if (value < cheapBelow) {
+                // "Wert unter Minimum" was 877 of ~1550 rejections after the full analysis
+                skipCheap++;
+                continue;
+            }
             long bid = nextBid(auction.startingBid, auction.highestBidAmount);
             if (bid <= 0) {
                 skipBid++;
                 continue;
+            }
+            long[] rejected = REJECTED_AT_BID.get(uuidKey(auction.uuid));
+            if (rejected != null && rejected[0] == bid) {
+                skipRejected++;
+                continue; // checked at exactly this bid a moment ago: still not worth it
             }
             candidates.add(new Candidate(auction, bid, profitPercent(value, bid), value));
         }
@@ -744,7 +813,7 @@ public final class AhBidMacro {
         System.out.println("[AH-Flipper] Bid-Macro Filter: tracked=" + skipTracked
                 + " ending=" + skipEnding + " blocked=" + skipBlocked
                 + " noMarket=" + skipNoMarket + " volume=" + skipVolume
-                + " bid=" + skipBid);
+                + " bid=" + skipBid + " cheap=" + skipCheap + " rejectedBefore=" + skipRejected);
         candidates.sort(Comparator.comparingLong(
                 (Candidate candidate) -> Math.max(0, candidate.marketValue() - candidate.nextBid()))
                 .reversed()
@@ -753,11 +822,11 @@ public final class AhBidMacro {
                 AhFlipperMod.CONFIG.bidMacroMaxCandidatesPerScan));
         int maxBids = Math.max(1, Math.min(budget, 15));
         List<Candidate> uniqueCandidates = new ArrayList<>();
-        Set<String> seenTags = new HashSet<>();
+        Map<String, Integer> perTag = new HashMap<>();
         for (Candidate candidate : candidates) {
             String tag = candidate.auction().tag == null
                     ? "" : candidate.auction().tag.toLowerCase(Locale.ROOT);
-            if (seenTags.add(tag)) {
+            if (perTag.merge(tag, 1, Integer::sum) <= PER_TAG) {
                 uniqueCandidates.add(candidate);
             }
         }
@@ -766,8 +835,8 @@ public final class AhBidMacro {
         List<ScoredCandidate> scored = new ArrayList<>();
         int analyzed = 0;
         for (Candidate candidate : uniqueCandidates) {
-            if (!running || analyzed >= analysisLimit || AhFlipperMod.isBusy()
-                    || rebidWaiting()) {
+            // the analysis only asks the API - it may go on while the AH flipper uses the menu
+            if (!running || analyzed >= analysisLimit || rebidWaiting()) {
                 break;
             }
             analyzed++;
@@ -825,6 +894,7 @@ public final class AhBidMacro {
                     result == null ? 0 : result.score,
                     reason));
             if (!reason.isBlank()) {
+                REJECTED_AT_BID.put(uuidKey(details.uuid), new long[]{bid, System.currentTimeMillis()});
                 continue;
             }
             scored.add(new ScoredCandidate(details, bid, result));
@@ -1133,6 +1203,7 @@ public final class AhBidMacro {
             }
             String rebidKey = uuidKey(details.uuid);
             REBID_COMMANDS.remove(rebidKey);
+            REBID_DUE.remove(uuidKey(rebidKey));
             REBID_ATTEMPTS.remove(rebidKey);
             Tracked previous = TRACKED.get(details.uuid);
             if (previous != null && !previous.refunded) {
@@ -1393,6 +1464,82 @@ public final class AhBidMacro {
             return false;
         }
         return true;
+    }
+
+    /** Outbid on an auction: not before this time (ms) is the bid raised again, per auction. */
+    private static final Map<String, Long> REBID_DUE = new ConcurrentHashMap<>();
+    /** Above this much time left the far cooldown applies in full. */
+    static final long COOLDOWN_FAR_MS = 120 * 60_000L;
+    /** At or below this much time left the near cooldown (milliseconds) applies. */
+    static final long COOLDOWN_NEAR_MS = 5 * 60_000L;
+
+    /**
+     * Wait before raising the bid after being outbid, by the time the auction still runs:
+     * {@code farMin..farMax} ms with two hours or more left, {@code nearMin..nearMax} ms in the
+     * last five minutes, and exponential (log scale) in between - an hour before the end it
+     * waits seconds, half an hour before about one. Never below {@code nearMin}.
+     *
+     * @param random 0..1, where in the range the wait lands
+     */
+    static long rebidCooldownMs(long remainingMs, double farMin, double farMax,
+                                double nearMin, double nearMax, double random) {
+        double nMin = Math.max(1.0, nearMin);
+        double nMax = Math.max(nMin, nearMax);
+        double fMin = Math.max(nMin, farMin);
+        double fMax = Math.max(fMin, farMax);
+        double r = Math.clamp((double) remainingMs, (double) COOLDOWN_NEAR_MS, (double) COOLDOWN_FAR_MS);
+        double f = (Math.log(r) - Math.log(COOLDOWN_NEAR_MS))
+                / (Math.log(COOLDOWN_FAR_MS) - Math.log(COOLDOWN_NEAR_MS));
+        double lo = Math.exp(Math.log(nMin) + f * (Math.log(fMin) - Math.log(nMin)));
+        double hi = Math.exp(Math.log(nMax) + f * (Math.log(fMax) - Math.log(nMax)));
+        double pick = lo + Math.clamp(random, 0.0, 1.0) * (hi - lo);
+        return Math.max(Math.round(nMin), Math.round(pick));
+    }
+
+    /** The configured cooldown for an auction with {@code remainingMs} left (0 = setting off). */
+    private static long rebidCooldownMs(long remainingMs) {
+        AhFlipperConfig c = AhFlipperMod.CONFIG;
+        if (!c.bidMacroRebidCooldown) {
+            return 0;
+        }
+        return rebidCooldownMs(remainingMs, c.bidMacroRebidFarMinSeconds * 1000.0,
+                c.bidMacroRebidFarMaxSeconds * 1000.0, 1.0, c.bidMacroRebidNearMaxMs,
+                ThreadLocalRandom.current().nextDouble());
+    }
+
+    /** Time left of an outbid auction, as far as we know it (0 = unknown: treat as ending). */
+    private static long remainingMs(String key) {
+        Tracked tracked = trackedFor(key);
+        long end = tracked != null ? tracked.end : 0;
+        if (end <= 0) {
+            AhMarketData.AuctionDetails details = chatDetails(key);
+            end = details == null ? 0 : details.end;
+        }
+        return end <= 0 ? 0 : Math.max(0, end - System.currentTimeMillis());
+    }
+
+    /** Sets (once per outbid) when this auction may be bid on again; returns that time. */
+    private static long rebidDue(String key) {
+        String k = uuidKey(key);
+        return REBID_DUE.computeIfAbsent(k, ignored -> {
+            long wait = rebidCooldownMs(remainingMs(k));
+            if (wait > 1000) {
+                System.out.println("[AH-Flipper] Outbid-Cooldown " + (wait / 1000) + "s fuer " + k);
+            }
+            return System.currentTimeMillis() + wait;
+        });
+    }
+
+    /** A rebid is due within {@code withinMs} (or right now). */
+    private static boolean rebidDueWithin(long withinMs) {
+        long limit = System.currentTimeMillis() + withinMs;
+        for (String key : REBID_COMMANDS.keySet()) {
+            Long due = REBID_DUE.get(uuidKey(key));
+            if (due == null || due <= limit) {
+                return true;
+            }
+        }
+        return false;
     }
 
     private static boolean recentlyRejected(String uuid) {

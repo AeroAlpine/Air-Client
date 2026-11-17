@@ -10,6 +10,8 @@ public final class PathfinderTuning {
     public static final double NO_JUMP = 1_000_000.0;
 
     private static volatile PlayerMovementStats stats = PlayerMovementStats.VANILLA;
+    /** Sprint was switched off because of a hard path part (and has to come back after it). */
+    private static boolean sprintTakenByDifficulty;
 
     private PathfinderTuning() {
     }
@@ -36,7 +38,20 @@ public final class PathfinderTuning {
         s.jumpHeight.value = Math.max(s.jumpHeight.value, Math.max(1.0, current.jumpHeight()));
         // Step height >= 1 block: walking up a full block needs no jump.
         s.assumeStep.value = current.stepHeight() >= 1.0;
+        // Hard part ahead (gap, 1-block corridor, jump after jump): walk it exactly - no sprint
+        // (overshoots the small blocks), no yaw smoothing (follow every block centre).
+        boolean hard = PathDifficulty.isHard();
+        if (hard) {
+            if (s.allowSprint.value) {
+                s.allowSprint.value = false;
+                sprintTakenByDifficulty = true;
+            }
+        } else if (sprintTakenByDifficulty) {
+            s.allowSprint.value = true; // the hard part is behind us: give it back
+            sprintTakenByDifficulty = false;
+        }
         s.allowSprint.value = s.allowSprint.value && config.allowSprint;
+        s.moveYawSmoothing.value = hard ? 0f : (float) (0.55 - 0.3 * MovementStyle.calm());
         s.costHeuristic.value = config.costHeuristic;
         s.movementTimeoutTicks.value = config.movementTimeoutTicks;
         s.maxYawChangePerTick.value = (float) Math.max(0.0, config.maxTurnPerTick);

@@ -1274,7 +1274,7 @@ public class AhFlipperMod {
         ScreenUtil.setAbortCheck(abortWhenStopped());
         try {
             long deadline = System.currentTimeMillis() + 30000;
-            while ((isBusy() || isBidPriorityActive()) && running
+            while ((isBusy() || isBidPriorityActive() || hasPendingAutoBuy()) && running
                     && System.currentTimeMillis() < deadline) {
                 ScreenUtil.sleep(50);
             }
@@ -2664,7 +2664,9 @@ public class AhFlipperMod {
     private static void autoWorkerLoop() {
         try {
             while (running && autoBuy) {
-                if (SOLD_CLAIM_PENDING.get() || isBidPriorityActive()) {
+                // A pending sold-claim does not hold up buying any more: a flip is gone within
+                // seconds, collecting coins can wait (it waits for the buy queue instead).
+                if (isBidPriorityActive()) {
                     ScreenUtil.sleep(100);
                     continue;
                 }

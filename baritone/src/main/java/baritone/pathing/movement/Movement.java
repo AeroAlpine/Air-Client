@@ -174,7 +174,11 @@ public abstract class Movement implements IMovement, MovementHelper {
         float wantYaw = rotation.getYaw();
         float moveYaw = ((LookBehavior) baritone.getLookBehavior()).plannedMoveYaw(rotation);
         float off = net.minecraft.util.Mth.wrapDegrees(wantYaw - moveYaw);
-        if (Math.abs(off) <= 25f) {
+        // With the walking yaw smoothed (moveYawSmoothing) it lags the block-centre aim a bit on
+        // every zig-zag; forward still makes good progress up to ~40 degrees, and strafing on
+        // every small lag looked like walking sideways back and forth.
+        float tolerance = Baritone.settings().moveYawSmoothing.value > 0 ? 40f : 25f;
+        if (Math.abs(off) <= tolerance) {
             return;
         }
         state.setInput(Input.MOVE_FORWARD, false);

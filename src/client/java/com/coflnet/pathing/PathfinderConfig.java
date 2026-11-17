@@ -56,7 +56,9 @@ public final class PathfinderConfig {
     /** Extra cost of one teleport (mana) in ticks. */
     public double teleportCostTicks = 4.0;
     /** Most etherwarps planned in a row. */
-    public int etherwarpMaxChain = 3;
+    public int etherwarpMaxChain = 20;
+    /** How fast the camera turns for a teleport or an etherwarp (degrees per second). */
+    public double warpRotationSpeed = 650.0;
 
     /** Static NPCs / mobs that block the way count as obstacles. */
     public boolean avoidStandingEntities = true;
@@ -75,7 +77,7 @@ public final class PathfinderConfig {
 
     /** Bumped when defaults change; older files (no field = 0) get the new defaults once. */
     public int configVersion;
-    static final int CURRENT_VERSION = 2;
+    static final int CURRENT_VERSION = 3;
 
     private static final Gson GSON = new GsonBuilder().setPrettyPrinting().create();
     private static volatile PathfinderConfig instance;
@@ -131,6 +133,17 @@ public final class PathfinderConfig {
             configVersion = 2;
             save();
         }
+        if (configVersion < 3) {
+            // etherwarp chains used to stop at 3; warp turn speed is new
+            if (etherwarpMaxChain <= 3) {
+                etherwarpMaxChain = 20;
+            }
+            if (warpRotationSpeed <= 0) {
+                warpRotationSpeed = 650.0;
+            }
+            configVersion = 3;
+            save();
+        }
     }
 
     void clamp() {
@@ -149,7 +162,8 @@ public final class PathfinderConfig {
         aotvMinGain = (int) clamp(aotvMinGain, 3, 40);
         etherwarpCostTicks = clamp(etherwarpCostTicks, 0.0, 200.0);
         teleportCostTicks = clamp(teleportCostTicks, 0.0, 100.0);
-        etherwarpMaxChain = (int) clamp(etherwarpMaxChain, 1, 3);
+        etherwarpMaxChain = (int) clamp(etherwarpMaxChain, 1, 20);
+        warpRotationSpeed = clamp(warpRotationSpeed, 120.0, 1800.0);
         if (aotvMode == null || aotvMode.isBlank()) {
             aotvMode = "OFF";
         }

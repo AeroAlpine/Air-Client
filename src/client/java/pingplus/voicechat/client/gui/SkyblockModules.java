@@ -468,6 +468,23 @@ final class SkyblockModules {
                             v -> { c.bidMacroMaxBankrollFraction = v / 100.0; c.save(); })
                     .toggle("Auto-list won items", "Lists won items on the AH right away.",
                             () -> c.bidMacroAutoList, () -> { c.bidMacroAutoList = !c.bidMacroAutoList; c.save(); });
+            b.group("Rebid after outbid")
+                    .toggle("Smart rebid wait", "After being outbid, wait longer the longer the auction still runs: "
+                                    + "minutes with 2 h left, milliseconds in the last 5 min (exponential in between).",
+                            () -> c.bidMacroRebidCooldown, () -> { c.bidMacroRebidCooldown = !c.bidMacroRebidCooldown; c.save(); })
+                    .slider("Wait at 2 h (min)", "Shortest wait with 2 hours or more left.", 0, 300, 5, "s",
+                            () -> c.bidMacroRebidFarMinSeconds, v -> {
+                                c.bidMacroRebidFarMinSeconds = v;
+                                c.bidMacroRebidFarMaxSeconds = Math.max(c.bidMacroRebidFarMaxSeconds, v);
+                                c.save();
+                            })
+                    .slider("Wait at 2 h (max)", "Longest wait with 2 hours or more left.", 0, 600, 5, "s",
+                            () -> c.bidMacroRebidFarMaxSeconds, v -> {
+                                c.bidMacroRebidFarMaxSeconds = Math.max(v, c.bidMacroRebidFarMinSeconds);
+                                c.save();
+                            })
+                    .slider("Wait last 5 min (max)", "Longest wait in the last 5 minutes; the shortest is 1 ms.", 1, 100, 1, "ms",
+                            () -> c.bidMacroRebidNearMaxMs, v -> { c.bidMacroRebidNearMaxMs = v; c.save(); });
             b.session(BotSessions.Bot.BID);
             b.panel("Bids panel", () -> c.bidsPanelEnabled, () -> { c.bidsPanelEnabled = !c.bidsPanelEnabled; c.save(); },
                     () -> c.bidsPanelRows, v -> { c.bidsPanelRows = v; c.save(); });
@@ -769,8 +786,10 @@ final class SkyblockModules {
                         () -> pf.etherwarpCostTicks, v -> { pf.etherwarpCostTicks = v; pf.save(); })
                 .slider("Teleport cost", "Extra cost of one teleport (mana).", 0, 40, 1, "ticks",
                         () -> pf.teleportCostTicks, v -> { pf.teleportCostTicks = v; pf.save(); })
-                .slider("Etherwarps in a row", "Most etherwarps planned one after another.", 1, 3, 1, "",
+                .slider("Etherwarps in a row", "Most etherwarps planned one after another.", 1, 20, 1, "",
                         () -> pf.etherwarpMaxChain, v -> { pf.etherwarpMaxChain = (int) Math.round(v); pf.save(); })
+                .slider("Warp turn speed", "How fast the camera turns for a teleport or an etherwarp.", 120, 1800, 10, "°/s",
+                        () -> pf.warpRotationSpeed, v -> { pf.warpRotationSpeed = v; pf.save(); })
                 .group("Learning from faults")
                 .toggle("Learn from faults", "Remembers spots where it got stuck and avoids them next time.",
                         () -> pf.learnFromFaults, () -> { pf.learnFromFaults = !pf.learnFromFaults; pf.save(); })

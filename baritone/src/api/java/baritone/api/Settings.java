@@ -809,6 +809,15 @@ public final class Settings {
     public final Setting<Float> maxYawChangePerTick = new Setting<>(0f);
 
     /**
+     * Air Client: share (0..1) of a small yaw difference the walking direction closes per tick;
+     * 0 = jump straight to the wanted yaw. Baritone aims at the centre of every next block, so
+     * on diagonal paths the yaw swung left-right-left by 60+ degrees within a few ticks. With
+     * smoothing the yaw follows the average course; the keys are picked to still walk the
+     * exact way. Big turns (over 50 degrees) are not smoothed.
+     */
+    public final Setting<Float> moveYawSmoothing = new Setting<>(0f);
+
+    /**
      * When true, the player will remain with its existing look direction as often as possible.
      * Although, in some cases this can get it stuck, hence this setting to disable that behavior.
      */
