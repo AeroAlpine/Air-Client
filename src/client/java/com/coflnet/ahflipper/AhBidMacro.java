@@ -741,12 +741,11 @@ public final class AhBidMacro {
         int skipNoMarket = 0;
         int skipVolume = 0;
         int skipBid = 0;
-        int skipCheap = 0;
         int skipRejected = 0;
         REJECTED_AT_BID.entrySet().removeIf(e -> now - e.getValue()[1] > REJECTED_TTL_MS);
-        // The detailed valuation can add addons, so cut only clearly cheaper items here.
-        long minValue = Math.max(0L, AhFlipperMod.CONFIG.bidMacroMinValueCoins);
-        long cheapBelow = (long) (minValue * 0.7);
+        // No minimum-value cut here: the market value is the clean item's price, but good bid
+        // flips are exactly the items whose worth is in their addons (enchants, stars, recomb).
+        // A pre-filter on it (v0.3.4) dropped two thirds of the auctions and almost every bid.
         for (AhMarketData.ActiveAuction auction : auctions) {
             if (rebidWaiting()) {
                 return;
@@ -792,11 +791,6 @@ public final class AhBidMacro {
                 skipNoMarket++;
                 continue;
             }
-            if (value < cheapBelow) {
-                // "Wert unter Minimum" was 877 of ~1550 rejections after the full analysis
-                skipCheap++;
-                continue;
-            }
             long bid = nextBid(auction.startingBid, auction.highestBidAmount);
             if (bid <= 0) {
                 skipBid++;
@@ -813,7 +807,7 @@ public final class AhBidMacro {
         System.out.println("[AH-Flipper] Bid-Macro Filter: tracked=" + skipTracked
                 + " ending=" + skipEnding + " blocked=" + skipBlocked
                 + " noMarket=" + skipNoMarket + " volume=" + skipVolume
-                + " bid=" + skipBid + " cheap=" + skipCheap + " rejectedBefore=" + skipRejected);
+                + " bid=" + skipBid + " rejectedBefore=" + skipRejected);
         candidates.sort(Comparator.comparingLong(
                 (Candidate candidate) -> Math.max(0, candidate.marketValue() - candidate.nextBid()))
                 .reversed()
