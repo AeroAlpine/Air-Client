@@ -121,6 +121,12 @@ public class VoicechatClient implements ClientModInitializer {
         killauraKey = registerKillAura();
         pingplus.voicechat.client.FollowFeature.setToggleKey(KeyMappingHelper.registerKeyMapping(new KeyMapping(
                 "key.voicechat.combat", GLFW.GLFW_KEY_UNKNOWN, CLIENT_CATEGORY)));
+        com.coflnet.interactions.InteractionLogger.init(KeyMappingHelper.registerKeyMapping(new KeyMapping(
+                "key.voicechat.interaction_logger", GLFW.GLFW_KEY_PERIOD, CLIENT_CATEGORY)));
+        com.coflnet.mining.MiningFeatures.init();
+        com.coflnet.failsafe.Failsafe.init();
+        com.coflnet.mining.bot.CommissionBot.init(KeyMappingHelper.registerKeyMapping(new KeyMapping(
+                "key.voicechat.commission_bot", GLFW.GLFW_KEY_UNKNOWN, CLIENT_CATEGORY)));
         shoulderCamKey = registerShoulderCamKey();
         HandSwapFeature handSwap = new HandSwapFeature();
 

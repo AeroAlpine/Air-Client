@@ -204,7 +204,8 @@ final class SkyblockModules {
             experimentTable(), visuals(), itemValue(), panelStyle(),
             combat(),
             auctionFlipper(), autoBid(), bazaarFlipper(), lowballing(), investments(), bazaarFlips(), fireSale(),
-            pathfinder(), slayer());
+            commissionBot(), commissions(), oreHelper(), dwarvenAlerts(), dwarvenOverview(),
+            pathfinder(), failsafe(), slayer(), interactionLogger());
 
     static List<Module> in(Section section) {
         return MODULES.stream().filter(m -> m.section() == section).toList();
@@ -726,7 +727,152 @@ final class SkyblockModules {
                         () -> lb.panelFooter, () -> { lb.panelFooter = !lb.panelFooter; lb.save(); })
                 .panelStyle("AH Investments", () -> ah.investmentPanelGlass, () -> { ah.investmentPanelGlass = !ah.investmentPanelGlass; ah.save(); },
                         () -> ah.investmentPanelEdges, () -> { ah.investmentPanelEdges = !ah.investmentPanelEdges; ah.save(); },
-                        () -> ah.investmentPanelFooter, () -> { ah.investmentPanelFooter = !ah.investmentPanelFooter; ah.save(); }));
+                        () -> ah.investmentPanelFooter, () -> { ah.investmentPanelFooter = !ah.investmentPanelFooter; ah.save(); })
+                .panelStyle("Commissions", () -> PlayerSettings.miningCommissionGlass,
+                        () -> PlayerSettings.miningCommissionGlass = !PlayerSettings.miningCommissionGlass,
+                        () -> PlayerSettings.miningCommissionEdges,
+                        () -> PlayerSettings.miningCommissionEdges = !PlayerSettings.miningCommissionEdges,
+                        () -> PlayerSettings.miningCommissionFooter,
+                        () -> PlayerSettings.miningCommissionFooter = !PlayerSettings.miningCommissionFooter)
+                .panelStyle("Dwarven Overview", () -> PlayerSettings.miningOverviewGlass,
+                        () -> PlayerSettings.miningOverviewGlass = !PlayerSettings.miningOverviewGlass,
+                        () -> PlayerSettings.miningOverviewEdges,
+                        () -> PlayerSettings.miningOverviewEdges = !PlayerSettings.miningOverviewEdges,
+                        () -> PlayerSettings.miningOverviewFooter,
+                        () -> PlayerSettings.miningOverviewFooter = !PlayerSettings.miningOverviewFooter));
+    }
+
+    // ---------------------------------------------------------------- Mining
+
+    private static Module commissionBot() {
+        return new Module("commissionbot", "Commission Bot",
+                "Goes to the King, claims and does your commissions (Glacite Walkers, Mithril, Titanium) "
+                        + "and comes back for the next ones. Event commissions are skipped.",
+                Section.MINING, () -> new ItemStack(Items.IRON_PICKAXE),
+                com.coflnet.mining.bot.CommissionBot::isRunning,
+                com.coflnet.mining.bot.CommissionBot::toggle, b -> b
+                .group("Bot")
+                .key("Start/stop key", "Starts and stops the bot. Click, then press a key (Esc clears it).",
+                        com.coflnet.mining.bot.CommissionBot::key)
+                .info("Status", "What the bot is doing right now.", com.coflnet.mining.bot.CommissionBot::status,
+                        () -> com.coflnet.mining.bot.CommissionBot.isRunning() ? 0xFFA4F0C1 : 0xFFD0D0D0)
+                .info("Session", "Claimed / finished commissions and time.", com.coflnet.mining.bot.CommissionBot::summary,
+                        () -> 0xFFD0D0D0)
+                .group("Commissions")
+                .toggle("Slayer (Walkers, Goblins)", "Mines Slayer / Glacite Walker Slayer at the Great Ice Wall and Goblin "
+                                + "Slayer in the Goblin Burrows, with Combat - walking only, no warps. Uses the item "
+                                + "in your hand.",
+                        () -> PlayerSettings.miningBotSlayer, () -> PlayerSettings.miningBotSlayer = !PlayerSettings.miningBotSlayer)
+                .toggle("Mithril and Titanium", "Mithril Miner, Titanium Miner and their area versions. Needs a "
+                                + "pickaxe or drill and an AOTV (teleport down, etherwarp up) in the hotbar.",
+                        () -> PlayerSettings.miningBotMining, () -> PlayerSettings.miningBotMining = !PlayerSettings.miningBotMining)
+                .group("Other")
+                .toggle("Sell full inventory", "Sells everything with /bz Sell Inventory Now when the inventory is "
+                                + "full (needs a Booster Cookie).",
+                        () -> PlayerSettings.miningBotSell, () -> PlayerSettings.miningBotSell = !PlayerSettings.miningBotSell)
+                .toggle("Details in chat", "Writes every step (routes, warps, claims) to chat.",
+                        () -> PlayerSettings.miningBotChat, () -> PlayerSettings.miningBotChat = !PlayerSettings.miningBotChat));
+    }
+
+    private static Module commissions() {
+        return new Module("commissions", "Commissions",
+                "Your open commissions on screen, highlights the blocks and mobs they need and tells you when one is done.",
+                Section.MINING, () -> new ItemStack(Items.WRITABLE_BOOK),
+                () -> PlayerSettings.miningCommissions,
+                () -> PlayerSettings.miningCommissions = !PlayerSettings.miningCommissions, b -> b
+                .group("Highlights")
+                .toggle("Commission blocks", "Boxes on the Mithril / Titanium / gemstone blocks your commissions need. "
+                                + "Area commissions only inside their area.",
+                        () -> PlayerSettings.miningCommissionBlocks,
+                        () -> PlayerSettings.miningCommissionBlocks = !PlayerSettings.miningCommissionBlocks)
+                .slider("Block radius", "How far around you blocks are highlighted.", 3, 20, 1, "blocks",
+                        () -> PlayerSettings.miningBlockRadius, v -> PlayerSettings.miningBlockRadius = (int) Math.round(v))
+                .toggle("Commission mobs", "Yellow outline on Goblins, Ice Walkers, Treasure Hoarders and others "
+                                + "while a commission needs them.",
+                        () -> PlayerSettings.miningCommissionMobs,
+                        () -> PlayerSettings.miningCommissionMobs = !PlayerSettings.miningCommissionMobs)
+                .toggle("Done alert", "Title and sound when a commission is complete.",
+                        () -> PlayerSettings.miningCommissionAlert,
+                        () -> PlayerSettings.miningCommissionAlert = !PlayerSettings.miningCommissionAlert)
+                .info("Read from", "The tab list widget Commissions (turn it on in /tab if it is missing).",
+                        () -> {
+                            var list = com.coflnet.mining.MiningState.commissions();
+                            return list.isEmpty() ? "No commissions seen" : list.size() + " commissions";
+                        }, () -> com.coflnet.mining.MiningState.commissions().isEmpty() ? 0xFFF0C27A : 0xFFA4F0C1)
+                .panel("Commissions panel", () -> PlayerSettings.miningCommissionPanel,
+                        () -> PlayerSettings.miningCommissionPanel = !PlayerSettings.miningCommissionPanel,
+                        () -> PlayerSettings.miningCommissionRows, v -> PlayerSettings.miningCommissionRows = v));
+    }
+
+    private static Module oreHelper() {
+        return new Module("ores", "Ore Helper",
+                "Titanium alert, ore info under the crosshair and your real break times per ore.",
+                Section.MINING, () -> new ItemStack(Items.PRISMARINE),
+                () -> PlayerSettings.miningOres, () -> PlayerSettings.miningOres = !PlayerSettings.miningOres, b -> b
+                .group("Titanium")
+                .toggle("Titanium alert", "Title and sound when Titanium spawns next to you while mining Mithril.",
+                        () -> PlayerSettings.miningTitaniumAlert,
+                        () -> PlayerSettings.miningTitaniumAlert = !PlayerSettings.miningTitaniumAlert)
+                .toggle("Titanium box", "White box on fresh Titanium until it is mined.",
+                        () -> PlayerSettings.miningTitaniumBox,
+                        () -> PlayerSettings.miningTitaniumBox = !PlayerSettings.miningTitaniumBox)
+                .group("Ore info")
+                .toggle("Block info", "Under the crosshair: ore, block strength, break ticks at your mining speed, "
+                                + "the speed you need for one tick less, and your measured average.",
+                        () -> PlayerSettings.miningBlockInfo, () -> PlayerSettings.miningBlockInfo = !PlayerSettings.miningBlockInfo)
+                .info("Mining speed", "From the tab list Stats widget (add Mining Speed in /tab).",
+                        () -> {
+                            double speed = com.coflnet.mining.MiningState.miningSpeed();
+                            return speed > 0 ? String.valueOf(Math.round(speed)) : "Not in tab list";
+                        }, () -> com.coflnet.mining.MiningState.miningSpeed() > 0 ? 0xFFA4F0C1 : 0xFFD0D0D0)
+                .action("Reset stats", "Starts the blocks, break times and powder counters again.", "Reset",
+                        com.coflnet.mining.MiningFeatures::resetStats));
+    }
+
+    private static Module dwarvenAlerts() {
+        return new Module("miningalerts", "Dwarven Alerts",
+                "Golden and Diamond Goblins, the Dark Monolith, Mineshaft portals and Suspicious Scrap.",
+                Section.MINING, () -> new ItemStack(Items.BELL),
+                () -> PlayerSettings.miningAlerts, () -> PlayerSettings.miningAlerts = !PlayerSettings.miningAlerts, b -> b
+                .group("Goblins")
+                .toggle("Goblin alert", "Title when a Golden or Diamond Goblin spawns.",
+                        () -> PlayerSettings.miningGoblinAlert, () -> PlayerSettings.miningGoblinAlert = !PlayerSettings.miningGoblinAlert)
+                .toggle("Goblin outline", "Gold / cyan outline through walls on Golden and Diamond Goblins.",
+                        () -> PlayerSettings.miningGoblinOutline, () -> PlayerSettings.miningGoblinOutline = !PlayerSettings.miningGoblinOutline)
+                .group("Dark Monolith")
+                .toggle("Monolith finder", "Finds the Dark Monolith (the dragon egg) up to 64 blocks away: box, "
+                                + "line, distance and an alert.",
+                        () -> PlayerSettings.miningMonolith, () -> PlayerSettings.miningMonolith = !PlayerSettings.miningMonolith)
+                .group("Other")
+                .toggle("Mineshaft and scrap", "Alert for a Glacite Mineshaft portal and for Suspicious Scrap.",
+                        () -> PlayerSettings.miningRareAlerts, () -> PlayerSettings.miningRareAlerts = !PlayerSettings.miningRareAlerts)
+                .toggle("Sound", "Plays a ping with every mining alert (also commission and titanium).",
+                        () -> PlayerSettings.miningAlertSound, () -> PlayerSettings.miningAlertSound = !PlayerSettings.miningAlertSound));
+    }
+
+    private static Module dwarvenOverview() {
+        return new Module("dwarven", "Dwarven Overview",
+                "Panel with the running mining event, the king, the Fallen Star Cult, powder per hour and your pace.",
+                Section.MINING, () -> new ItemStack(Items.CLOCK),
+                () -> PlayerSettings.miningOverview, () -> PlayerSettings.miningOverview = !PlayerSettings.miningOverview, b -> b
+                .group("Now")
+                .info("King", "The king in the Royal Palace today and when the next one comes.",
+                        () -> {
+                            String[] k = com.coflnet.mining.MiningFeatures.king();
+                            return k[0] + " · next " + k[1] + " in " + k[2];
+                        }, () -> 0xFFD0D0D0)
+                .info("Fallen Star Cult", "Meetings on day 7, 14, 21 and 28, 00:00 - 06:00 SkyBlock time.",
+                        () -> {
+                            Object[] c = com.coflnet.mining.MiningFeatures.cult();
+                            return ((boolean) c[0] ? "Now, " + c[1] + " left" : "in " + c[1]);
+                        }, () -> 0xFFD0D0D0)
+                .info("Event", "Read from the boss bar.",
+                        () -> {
+                            var e = com.coflnet.mining.MiningState.event();
+                            return e == null ? "None" : e.name() + " · " + e.timeLeft();
+                        }, () -> 0xFFD0D0D0)
+                .slider("Rows", "How many lines the panel shows.", 1, 5, 1, "",
+                        () -> PlayerSettings.miningOverviewRows, v -> PlayerSettings.miningOverviewRows = (int) Math.round(v)));
     }
 
     // ---------------------------------------------------------------- Misc
@@ -743,6 +889,10 @@ final class SkyblockModules {
                         () -> pf.allowJumps, () -> { pf.allowJumps = !pf.allowJumps; pf.save(); })
                 .toggle("Allow parkour", "May jump over gaps.",
                         () -> pf.allowParkour, () -> { pf.allowParkour = !pf.allowParkour; pf.save(); })
+                .toggle("Follow a straight line", "Pulls the planned path tight into a line (corners cut where "
+                                + "there is room, jumps kept) and walks it straight: calmer on stairs, drops and "
+                                + "diagonals. Narrow or parkour parts are walked block by block as before.",
+                        () -> pf.lineFollow, () -> { pf.lineFollow = !pf.lineFollow; pf.save(); })
                 .toggle("Allow sprint", "Sprints on longer straight parts.",
                         () -> pf.allowSprint, () -> { pf.allowSprint = !pf.allowSprint; pf.save(); })
                 .slider("Calm movement", "Higher = smoother, calmer camera while walking. Lower = snappier.",
@@ -840,6 +990,95 @@ final class SkyblockModules {
                 })
                 .toggle("Line to boss", "Draws a line from you to the boss.", () -> PlayerSettings.slayerLine,
                         () -> PlayerSettings.slayerLine = !PlayerSettings.slayerLine));
+    }
+
+    private static Module failsafe() {
+        return new Module("failsafe", "Fail-safe",
+                "Watches what the server does while a bot runs (Commission Bot, Combat, Lowballer) and reacts like a "
+                        + "player: small things are ignored, big or repeated ones get a cheeky chat line and a short pause.",
+                Section.MISC, () -> new ItemStack(Items.TOTEM_OF_UNDYING),
+                () -> PlayerSettings.failsafeEnabled, () -> PlayerSettings.failsafeEnabled = !PlayerSettings.failsafeEnabled, b -> b
+                .group("Status")
+                .info("Last check", "The last thing the fail-safe noticed.", com.coflnet.failsafe.Failsafe::status,
+                        () -> 0xFFD0D0D0)
+                .group("Teleport and camera")
+                .slider("Big teleport", "A server teleport this far (not one of our warps) counts as a check: stop, "
+                                + "chat line, pause. Smaller ones are lag: carry on (4 in 20 s = a check).", 3, 30, 1, "blocks",
+                        () -> PlayerSettings.failsafeTeleportBlocks, v -> PlayerSettings.failsafeTeleportBlocks = (int) Math.round(v))
+                .slider("Big camera turn", "The server turning the camera this much counts as a check. Smaller turns: "
+                                + "a short glance at most; 3 in 30 s = a check.", 10, 180, 5, "°",
+                        () -> PlayerSettings.failsafeRotationDegrees, v -> PlayerSettings.failsafeRotationDegrees = (int) Math.round(v))
+                .group("Blocks")
+                .toggle("Block check", "Blocks out of nowhere around you (a box) or the floor vanishing. A few odd "
+                                + "blocks are ignored.", () -> PlayerSettings.failsafeBlocks,
+                        () -> PlayerSettings.failsafeBlocks = !PlayerSettings.failsafeBlocks)
+                .slider("Blocks for a check", "How many new blocks close and in view (within 3 s) count as a check.",
+                        2, 12, 1, "", () -> PlayerSettings.failsafeBlockCount, v -> PlayerSettings.failsafeBlockCount = (int) Math.round(v))
+                .group("Item")
+                .toggle("Item check", "The held item swapped by the server: carry on a few seconds, then notice it, look "
+                                + "around, check the inventory, take the right item and go on.",
+                        () -> PlayerSettings.failsafeItem, () -> PlayerSettings.failsafeItem = !PlayerSettings.failsafeItem)
+                .slider("Notice after (min)", "Earliest time until the swap is 'noticed'.", 1, 30, 1, "s",
+                        () -> PlayerSettings.failsafeItemMinS, v -> {
+                            PlayerSettings.failsafeItemMinS = (int) Math.round(v);
+                            PlayerSettings.failsafeItemMaxS = Math.max(PlayerSettings.failsafeItemMaxS, PlayerSettings.failsafeItemMinS);
+                        })
+                .slider("Notice after (max)", "Latest time until the swap is noticed.", 1, 40, 1, "s",
+                        () -> PlayerSettings.failsafeItemMaxS,
+                        v -> PlayerSettings.failsafeItemMaxS = Math.max((int) Math.round(v), PlayerSettings.failsafeItemMinS))
+                .group("Chat")
+                .toggle("Answer my name", "Your name in chat or a private message: pause, answer like a player, go on.",
+                        () -> PlayerSettings.failsafeChat, () -> PlayerSettings.failsafeChat = !PlayerSettings.failsafeChat)
+                .toggle("Cheeky chat line", "On a real check: 'W macro check lol', 'im not macroing gng' ...",
+                        () -> PlayerSettings.failsafeTroll, () -> PlayerSettings.failsafeTroll = !PlayerSettings.failsafeTroll)
+                .toggle("Sound", "A ping for you on every check.", () -> PlayerSettings.failsafeSound,
+                        () -> PlayerSettings.failsafeSound = !PlayerSettings.failsafeSound)
+                .group("Test (nothing is sent to chat)")
+                .action("Name in chat", "As if a player wrote your name.", "Test", () -> com.coflnet.failsafe.Failsafe.test("chat"))
+                .action("Item swap", "Really switches your hotbar slot, then the reaction runs.", "Test",
+                        () -> com.coflnet.failsafe.Failsafe.test("item"))
+                .action("Small camera turn", "A small turn: a short glance.", "Test", () -> com.coflnet.failsafe.Failsafe.test("small"))
+                .action("Big camera turn", "Really turns you 90°, then the reaction.", "Test",
+                        () -> com.coflnet.failsafe.Failsafe.test("rotation"))
+                .action("Big teleport", "As if the server teleported you far.", "Test",
+                        () -> com.coflnet.failsafe.Failsafe.test("teleport"))
+                .action("Box of blocks", "As if blocks appeared around you.", "Test", () -> com.coflnet.failsafe.Failsafe.test("blocks")));
+    }
+
+    private static Module interactionLogger() {
+        return new Module("interactions", "Interaction Logger",
+                "Records what you do - path, island, GUIs and clicks, NPCs, chat and the blocks around you - "
+                        + "and saves it under a name you type in.",
+                Section.MISC, () -> new ItemStack(Items.WRITABLE_BOOK),
+                com.coflnet.interactions.InteractionLogger::isRecording,
+                com.coflnet.interactions.InteractionLogger::toggle, b -> b
+                .group("Recording")
+                .key("Start/stop key", "Press once to start, again to stop and name the recording. "
+                                + "Also works inside chest menus. Click, then press a key (Esc clears it).",
+                        com.coflnet.interactions.InteractionLogger::key)
+                .info("Status", "Current recording.", com.coflnet.interactions.InteractionLogger::status,
+                        () -> com.coflnet.interactions.InteractionLogger.isRecording() ? 0xFFFF7777 : 0xFFD0D0D0)
+                .group("What to record")
+                .toggle("GUI contents", "Every menu you open with all items and their lore, again each time it changes.",
+                        () -> PlayerSettings.interactionGuis, () -> PlayerSettings.interactionGuis = !PlayerSettings.interactionGuis)
+                .toggle("Chat", "Chat messages from the server and players.",
+                        () -> PlayerSettings.interactionChat, () -> PlayerSettings.interactionChat = !PlayerSettings.interactionChat)
+                .toggle("Scoreboard & tab list", "Sidebar and tab list whenever they change (commissions, events, area).",
+                        () -> PlayerSettings.interactionScoreboard,
+                        () -> PlayerSettings.interactionScoreboard = !PlayerSettings.interactionScoreboard)
+                .toggle("Map around you", "Remembers the blocks around your path, so the area can be rebuilt later.",
+                        () -> PlayerSettings.interactionScanMap, () -> PlayerSettings.interactionScanMap = !PlayerSettings.interactionScanMap)
+                .slider("Map radius", "How far around you blocks are remembered.", 2, 16, 1, "blocks",
+                        () -> PlayerSettings.interactionScanRadius, v -> PlayerSettings.interactionScanRadius = (int) Math.round(v))
+                .group("Files")
+                .action("Log folder", "Opens logs/interactions.", "Open", () -> {
+                    try {
+                        java.nio.file.Files.createDirectories(com.coflnet.interactions.InteractionLogger.folder());
+                        net.minecraft.util.Util.getPlatform().openPath(com.coflnet.interactions.InteractionLogger.folder());
+                    } catch (Exception e) {
+                        AhFlipperMod.message("§cCould not open the folder: " + e.getMessage());
+                    }
+                }));
     }
 
     private SkyblockModules() {

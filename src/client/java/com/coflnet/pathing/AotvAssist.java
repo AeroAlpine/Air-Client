@@ -117,7 +117,123 @@ public final class AotvAssist {
         }
     };
 
+    /** Set by the Commission Bot: warp much more often (scales the minimum gain), or never. */
+    private static volatile double gainScale = 1.0;
+    private static volatile double teleportCostScale = 1.0;
+    private static volatile boolean forceBoth;
+    private static volatile boolean suppressed;
+
     private AotvAssist() {
+    }
+
+    /**
+     * Warp eagerness for another bot. {@code gain} below 1 = warp even for small savings,
+     * {@code both} = teleport and etherwarp even when the Pathfinder tab says OFF.
+     */
+    public static void setBias(double gain, double teleportCost, boolean both) {
+        gainScale = Math.clamp(gain, 0.05, 1.0);
+        teleportCostScale = Math.clamp(teleportCost, 0.0, 1.0);
+        forceBoth = both;
+    }
+
+    public static void clearBias() {
+        gainScale = 1.0;
+        teleportCostScale = 1.0;
+        forceBoth = false;
+        suppressed = false;
+    }
+
+    /** No automatic warps while set (Combat for the Commission Bot walks only). */
+    public static void suppress(boolean on) {
+        suppressed = on;
+        if (on && step != Step.IDLE) {
+            abort(Minecraft.getInstance());
+        }
+    }
+
+    /**
+     * Runs a warp route chosen by another bot (the miner: teleport down, etherwarp up). Returns
+     * false when a warp is already running or the item is missing.
+     */
+    public static boolean execute(List<WarpPlanner.Hop> hops) {
+        return execute(hops, false);
+    }
+
+    /**
+     * Like {@link #execute(List)}; {@code keepItem} leaves the AOTV in the hand afterwards (the
+     * next warp of a chain comes right after: no swapping back and forth).
+     */
+    public static boolean execute(List<WarpPlanner.Hop> hops, boolean keepItem) {
+        Minecraft client = Minecraft.getInstance();
+        LocalPlayer player = client.player;
+        if (player == null || hops == null || hops.isEmpty() || step != Step.IDLE
+                || com.coflnet.failsafe.Failsafe.slotFrozen()) {
+            return false;
+        }
+        boolean ether = hops.get(0).kind() == WarpPlanner.Kind.ETHERWARP;
+        if (hotbarSlot(player, ether) < 0) {
+            return false;
+        }
+        cooldownUntil = 0;
+        keepSlot = keepItem;
+        start(client, player, new WarpPlanner.Route(List.copyOf(hops), 0, 0));
+        return true;
+    }
+
+    private static boolean forcedNoPath;
+    private static volatile long lastWarpAt;
+
+    /** When our last AOTV / etherwarp went off (the fail-safe knows the teleport is ours). */
+    public static long lastWarpAt() {
+        return lastWarpAt;
+    }
+    /** Leave the warp item selected when the current route ends (set per route). */
+    private static boolean keepSlot;
+
+    /**
+     * Another bot found no walking way to {@code goal}: plan a teleport / etherwarp route there
+     * right now (as if walking were impossible) and start it. False when no warp gets closer.
+     */
+    public static boolean warpToward(Goal goal) {
+        Minecraft client = Minecraft.getInstance();
+        LocalPlayer player = client.player;
+        IBaritone baritone;
+        try {
+            baritone = BaritoneAPI.getProvider().getPrimaryBaritone();
+        } catch (RuntimeException e) {
+            return false;
+        }
+        if (player == null || client.level == null || baritone == null || goal == null || step != Step.IDLE
+                || suppressed || !player.onGround()) {
+            return false;
+        }
+        Mode mode = forceBoth ? Mode.BOTH : mode();
+        if (mode == Mode.OFF) {
+            return false;
+        }
+        Optional<WarpPlanner.Route> found;
+        forcedNoPath = true;
+        try {
+            found = plan(client, player, baritone, goal, mode, false, true);
+        } finally {
+            forcedNoPath = false;
+        }
+        found.ifPresent(r -> start(client, player, r));
+        return found.isPresent();
+    }
+
+    /** The reach of the teleport item in the hotbar (12 for an AOTV), -1 without one. */
+    public static int teleportReach(LocalPlayer player) {
+        int slot = hotbarSlot(player, false);
+        if (slot < 0) {
+            return -1;
+        }
+        return teleportBlocks(player.getInventory().getItem(slot), PathfinderConfig.get().aotvTeleportBlocks);
+    }
+
+    /** True when the hotbar holds an item that can etherwarp. */
+    public static boolean canEtherwarp(LocalPlayer player) {
+        return hotbarSlot(player, true) >= 0;
     }
 
     /** True while aiming/warping: other camera control must stay out. */
@@ -168,15 +284,15 @@ public final class AotvAssist {
         }
         Goal goal = baritone.getPathingBehavior().getGoal();
         boolean botWalking = goal != null && baritone.getPathingControlManager().mostRecentInControl()
-                .filter(process -> process != PAUSE).isPresent();
+                .filter(process -> process != PAUSE && process != baritone.getFollowProcess()).isPresent();
         long now = System.currentTimeMillis();
         if (!botWalking || baritone.getPathingBehavior().hasPath()) {
             noPathSince = 0;
         } else if (noPathSince == 0) {
             noPathSince = now;
         }
-        Mode mode = mode();
-        if (mode == Mode.OFF || !botWalking || now < cooldownUntil || client.gui.screen() != null
+        Mode mode = forceBoth ? Mode.BOTH : mode();
+        if (suppressed || com.coflnet.failsafe.Failsafe.slotFrozen() || mode == Mode.OFF || !botWalking || now < cooldownUntil || client.gui.screen() != null
                 // the lowballer always walks: no AOTV, no etherwarp
                 || com.coflnet.lowballing.LowballingMod.isRunning()) {
             chain = 0;
@@ -233,7 +349,7 @@ public final class AotvAssist {
         c.turnSpeed = turnSpeed();
         c.maxChain = config.etherwarpMaxChain;
         c.etherwarpExtraTicks = config.etherwarpCostTicks;
-        c.teleportExtraTicks = config.teleportCostTicks;
+        c.teleportExtraTicks = config.teleportCostTicks * teleportCostScale;
         // Hard part ahead (gap, 1-block corridor, jump after jump): walking it may fail and get
         // stuck, so walking counts more expensive and an etherwarp over it cheaper.
         double difficulty = PathDifficulty.level();
@@ -267,7 +383,7 @@ public final class AotvAssist {
                 c.path = path.positions();
             }
             c.walkVanillaTicks = WarpPlanner.walkTicks(c, player.blockPosition());
-        } else if (noPathSince > 0 && System.currentTimeMillis() - noPathSince > NO_PATH_STUCK_MS) {
+        } else if (forcedNoPath || noPathSince > 0 && System.currentTimeMillis() - noPathSince > NO_PATH_STUCK_MS) {
             // Baritone finds no way (a ledge, a hole in a wall): walking is not an option
             c.walkVanillaTicks = WarpPlanner.walkTicks(c, player.blockPosition()) * 2.0 + 200.0;
         } else {
@@ -276,7 +392,7 @@ public final class AotvAssist {
         if (c.walkVanillaTicks <= 0) {
             return Optional.empty();
         }
-        double minSaving = Math.max(6.0, config.aotvMinGain * 3.6 * c.speedFactor);
+        double minSaving = Math.max(6.0 * gainScale, config.aotvMinGain * 3.6 * c.speedFactor * gainScale);
         if (!c.onGround) {
             // cutting a running jump short: every saved tick of flight counts
             minSaving *= 0.5;
@@ -285,14 +401,14 @@ public final class AotvAssist {
         WarpPlanner.Route best = null;
         int etherSlot = hotbarSlot(player, true);
         if (withEther && etherwarpOn(mode) && etherSlot >= 0 && c.onGround) {
-            best = better(best, WarpPlanner.etherwarp(c), minSaving, 0.15);
+            best = better(best, WarpPlanner.etherwarp(c), minSaving, 0.15 * gainScale);
         }
         int teleSlot = hotbarSlot(player, false);
         if (teleportOn(mode) && teleSlot >= 0) {
             ItemStack item = player.getInventory().getItem(teleSlot);
             c.teleportReach = teleportBlocks(item, config.aotvTeleportBlocks);
             teleportReach = c.teleportReach;
-            best = better(best, WarpPlanner.teleport(c), minSaving, c.onGround ? 0.15 : 0.0);
+            best = better(best, WarpPlanner.teleport(c), minSaving, c.onGround ? 0.15 * gainScale : 0.0);
         }
         if (best != null) {
             WarpPlanner.Hop first = best.hops().get(0);
@@ -481,6 +597,7 @@ public final class AotvAssist {
                 holdForward(client, false);
                 startPos = player.position();
                 client.gameMode.useItem(player, InteractionHand.MAIN_HAND);
+                lastWarpAt = System.currentTimeMillis();
                 next(Step.WAIT);
             }
             case WAIT -> {
@@ -513,8 +630,8 @@ public final class AotvAssist {
     private static void afterRoute(Minecraft client, LocalPlayer player, IBaritone baritone, WarpPlanner.Hop last) {
         if (last.kind() == WarpPlanner.Kind.TELEPORT && chain < 6) {
             Goal goal = baritone.getPathingBehavior().getGoal();
-            Mode mode = mode();
-            if (goal != null && teleportOn(mode) && !goal.isInGoal(player.blockPosition())) {
+            Mode mode = forceBoth ? Mode.BOTH : mode();
+            if (goal != null && !suppressed && teleportOn(mode) && !goal.isInGoal(player.blockPosition())) {
                 Optional<WarpPlanner.Route> again = plan(client, player, baritone, goal, Mode.TELEPORT, true, false);
                 if (again.isPresent()) {
                     chain++;
@@ -644,9 +761,10 @@ public final class AotvAssist {
             return;
         }
         float[] wanted = aimRotation(player, hop);
-        float speed = turnSpeed();
-        float yaw = pingplus.voicechat.client.AimSmoothing.step(player.getYRot(), wanted[0], speed, dt, 20.0);
-        float pitch = pingplus.voicechat.client.AimSmoothing.step(player.getXRot(), wanted[1], speed, dt, 20.0);
+        // a calm, eased turn to the warp direction (it locked on almost instantly before)
+        float speed = Math.min(turnSpeed(), 460f);
+        float yaw = pingplus.voicechat.client.AimSmoothing.step(player.getYRot(), wanted[0], speed, dt, 7.0);
+        float pitch = pingplus.voicechat.client.AimSmoothing.step(player.getXRot(), wanted[1], speed * 0.8f, dt, 7.0);
         player.setYRot(yaw);
         player.setXRot(pitch);
         player.setYHeadRot(yaw);
@@ -722,9 +840,10 @@ public final class AotvAssist {
         releaseJump(client);
         holdForward(client, false);
         baritone.behavior.LookBehavior.suspendSmoothing = false;
-        if (player != null && previousSlot >= 0) {
+        if (player != null && previousSlot >= 0 && !keepSlot) {
             player.getInventory().setSelectedSlot(previousSlot);
         }
+        keepSlot = false;
         previousSlot = -1;
         slot = -1;
     }

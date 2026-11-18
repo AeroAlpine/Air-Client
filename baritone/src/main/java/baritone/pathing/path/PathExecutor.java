@@ -399,6 +399,19 @@ public class PathExecutor implements IPathExecutor, Helper {
                 BlockPos fallDest = path.positions().get(pathPosition + 1); // .get(pathPosition) is the block we fell off of
                 return VecUtils.entityFlatDistanceToCenter(ctx.player(), fallDest) >= leniency; // ignore Y by using flat distance
             }
+            // Air Client: a fast drop (walking off stairs or a ledge at full speed) carries the
+            // player a few blocks further along the path than the movement planned. Cancelling
+            // mid-air re-planned from the air and the bot hung at every drop. While falling only
+            // the flat distance to the next path positions counts, with extra room; after the
+            // landing the normal check (and the skip-forward above) takes over again.
+            if (!ctx.player().onGround() && ctx.player().getDeltaMovement().y < 0.1 && !ctx.player().isInWater()) {
+                double nearest = Double.MAX_VALUE;
+                int end = Math.min(path.positions().size(), pathPosition + 8);
+                for (int i = pathPosition; i < end; i++) {
+                    nearest = Math.min(nearest, VecUtils.entityFlatDistanceToCenter(ctx.player(), path.positions().get(i)));
+                }
+                return nearest >= leniency + 3.0;
+            }
             // Air Client: a high jump (jump boost) lifts the player several blocks above the
             // path. Cancelling there re-planned from mid-air: a fall from the apex, during which
             // the server set the player back again and again. Above the path only the flat

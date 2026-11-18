@@ -15,6 +15,8 @@ public final class FlipperPanels {
     private static final ProfitPanel PROFIT = new ProfitPanel();
     private static final LowballingPanel LOWBALLING = new LowballingPanel();
     private static final CombatPanel COMBAT = new CombatPanel();
+    private static final CommissionsPanel COMMISSIONS = new CommissionsPanel();
+    private static final DwarvenPanel DWARVEN = new DwarvenPanel();
     
     private static boolean initialized;
 
@@ -40,12 +42,25 @@ public final class FlipperPanels {
                 COMBAT::visible,
                 (graphics, mouseX, mouseY, delta, editing) -> COMBAT.render(graphics, editing),
                 List::of, true));
-        
+        registerRight(COMMISSIONS, 40);
+        registerRight(DWARVEN, 200);
+
         if (AhFlipperMod.CONFIG.investmentPanelEnabled
                 || AhFlipperMod.CONFIG.investmentGui) {
             AhInvestmentTracker.start();
         }
         ClientTickEvents.END_CLIENT_TICK.register(client -> updateAll());
+    }
+
+    /** Right edge by default (the mining panels are only shown on mining islands). */
+    private static void registerRight(FlipperPanel panel, int defaultY) {
+        HudEditor.register(new HudEditor.Entry(panel.id(), panel.title(),
+                panel::width, panel::height,
+                (width, height) -> Math.max(8, width - panel.width() - 8),
+                (width, height) -> defaultY,
+                panel::visible,
+                (graphics, mouseX, mouseY, delta, editing) -> panel.render(graphics, editing),
+                List::of, true));
     }
 
     private static void register(FlipperPanel panel, int defaultX, int defaultY) {
@@ -67,6 +82,8 @@ public final class FlipperPanels {
         PROFIT.update();
         LOWBALLING.update();
         COMBAT.update();
+        COMMISSIONS.update();
+        DWARVEN.update();
     }
 }
 

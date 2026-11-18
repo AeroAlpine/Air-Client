@@ -85,7 +85,8 @@ public final class ScreenUtil {
         if (stripped == null) {
             stripped = raw;
         }
-        return stripped.replace('\u00A0', ' ').trim();
+        // Hypixel also hides invalid codes (\u00A7q, \u00A7v ...) in scoreboard lines against scrapers.
+        return stripped.replaceAll("\u00A7.", "").replace('\u00A0', ' ').trim();
     }
 
     public static String normalize(String raw) {

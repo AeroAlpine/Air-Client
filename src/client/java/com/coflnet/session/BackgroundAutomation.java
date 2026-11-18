@@ -17,7 +17,8 @@ public final class BackgroundAutomation {
         if (client == null || client.player == null || client.level == null) {
             return false;
         }
-        if (AhFlipperMod.isRunning() || AhBidMacro.isRunning() || LowballingMod.isRunning()) {
+        if (AhFlipperMod.isRunning() || AhBidMacro.isRunning() || LowballingMod.isRunning()
+                || com.coflnet.mining.bot.CommissionBot.isRunning()) {
             return true;
         }
         Trader trader = Trader.get();
