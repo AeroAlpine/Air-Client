@@ -52,6 +52,8 @@ public final class PathfinderTuning {
         }
         s.allowSprint.value = s.allowSprint.value && config.allowSprint;
         s.moveYawSmoothing.value = hard ? 0f : (float) (0.55 - 0.3 * MovementStyle.calm());
+        // straight lines instead of block-to-block zig-zags - not where every block counts
+        s.pathSmoothing.value = !hard;
         s.costHeuristic.value = config.costHeuristic;
         s.movementTimeoutTicks.value = config.movementTimeoutTicks;
         s.maxYawChangePerTick.value = (float) Math.max(0.0, config.maxTurnPerTick);

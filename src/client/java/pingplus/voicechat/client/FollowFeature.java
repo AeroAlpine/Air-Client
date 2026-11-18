@@ -75,7 +75,7 @@ public final class FollowFeature {
     /** Ticks between searches while no target is around. */
     private static final int SEARCH_RETRY_TICKS = 4;
     /** Ticks between "is another mob clearly closer?" checks. */
-    private static final int SWITCH_CHECK_TICKS = 5;
+    private static final int SWITCH_CHECK_TICKS = 2;
     /** After the last target is gone: how long the bot keeps looking around for the next one. */
     private static final long IDLE_LOOK_MS = 4_000L;
     private static net.minecraft.world.phys.Vec3 lastLostPos;
@@ -91,6 +91,20 @@ public final class FollowFeature {
     private static int queueCooldown;
     /** One-hit mode: mobs already clicked once, ignored until the time stored here. */
     private static final java.util.Map<UUID, Long> HIT_ONCE = new java.util.HashMap<>();
+    /** Targets nothing can hit from any reachable spot: skipped for a while. */
+    private static final java.util.Map<UUID, Long> UNREACHABLE = new java.util.HashMap<>();
+    private static final long UNREACHABLE_MS = 20_000L;
+    private static final long SEEK_GIVE_UP_MS = 8_000L;
+    /** Walking to a spot with a free line to {@link #seekFor} (custom goal, not the follow process). */
+    private static boolean seekingSpot;
+    /** Walking towards a kill-map spot while no target is in sight (null = not roaming). */
+    private static net.minecraft.world.phys.Vec3 roamTarget;
+    private static long roamSince;
+    private static final long ROAM_DELAY_MS = 2_500L;
+    private static final long ROAM_REPICK_MS = 30_000L;
+    private static Entity seekFor;
+    private static long seekStartedAt;
+    private static long seekGoalAt;
     /** Combat panel: targets finished (killed, or clicked once in one-hit mode) since start. */
     private static int done;
     private static long startedAt;
@@ -197,6 +211,7 @@ public final class FollowFeature {
         }
         if (!PlayerSettings.combatEnabled) {
             release();
+            com.coflnet.pathing.KillMap.clear(); // the kill map is per session
         }
     }
 
@@ -209,6 +224,7 @@ public final class FollowFeature {
         }
         long nowMs = System.currentTimeMillis();
         HIT_ONCE.values().removeIf(until -> until <= nowMs);
+        UNREACHABLE.values().removeIf(until -> until <= nowMs);
         if (PlayerSettings.combatOneHit && followed != null && !(followed instanceof Player)
                 && KillAuraFeature.lastAttackId() == followed.getId()
                 && KillAuraFeature.lastAttackAt() >= lastSwitchAt) {
@@ -221,6 +237,11 @@ public final class FollowFeature {
             followed = null;
             if (lost != null) {
                 done++;
+                if (KillAuraFeature.lastAttackId() == lost.getId()
+                        && nowMs - KillAuraFeature.lastAttackAt() < 15_000L) {
+                    // our kill (or our one hit): remember where, for when nothing is in sight
+                    com.coflnet.pathing.KillMap.record(lost.position());
+                }
             }
             Entity next = pollQueue(player);
             if (next != null) {
@@ -238,7 +259,10 @@ public final class FollowFeature {
             // a search found nothing, retry every few ticks. (Before: a fixed 10 tick wait plus a
             // full Baritone stop after every kill, so the bot stood still for half a second.)
             if (lost == null && searchCooldown-- > 0) {
-                idle(client, player);
+                // between two searches: keep walking to the kill zone if we already do
+                if (roamTarget == null || !roam(client, player, nowMs)) {
+                    idle(client, player);
+                }
                 return;
             }
             followed = findTarget(client, player, names);
@@ -248,9 +272,14 @@ public final class FollowFeature {
                     lastLostPos = lost.position();
                     lastLostAt = System.currentTimeMillis();
                 }
-                idle(client, player);
+                // nothing in sight: head for where the kills were densest (after a moment of
+                // looking around, like a player who just finished a mob)
+                if (nowMs - lastLostAt < ROAM_DELAY_MS || !roam(client, player, nowMs)) {
+                    idle(client, player);
+                }
                 return;
             }
+            stopRoam(primary());
             searchCooldown = 0;
             idleLooking = false;
             lastSwitchAt = System.currentTimeMillis();
@@ -282,7 +311,9 @@ public final class FollowFeature {
         // Leaves or a wall between us and the target: get closer until it is visible. Only after
         // it stayed hidden / visible for half a second and only on the ground: switching on every
         // flicker of the line of sight (each jump) re-planned the path constantly.
-        if (attack != null && !player.hasLineOfSight(current)) {
+        // "Hidden" = no part of the hitbox can be hit from here without a block in between
+        // (leaves and half slabs count: a hit does not go through them).
+        if (attack != null && !com.coflnet.pathing.VisibleGoal.seesAny(client.level, player.getEyePosition(), current)) {
             hiddenTicks++;
             visibleTicks = 0;
         } else {
@@ -299,6 +330,16 @@ public final class FollowFeature {
         configure(closeIn && attack != null);
         IFollowProcess follow = baritone.getFollowProcess();
         EntityObstacles.setTarget(current);
+        // Hidden behind a wall, leaves or a slab: getting 3 blocks close is no use when no hit
+        // gets through. Walk to a spot in reach with a free line - or give the target up.
+        if (seekingSpot && (attack == null || visibleTicks >= HIDDEN_SWITCH_TICKS || seekFor != current)) {
+            stopSeeking(baritone);
+        }
+        if (attack != null && (seekingSpot || (hiddenTicks >= HIDDEN_SWITCH_TICKS && player.onGround()))) {
+            if (seekVisibleSpot(client, player, baritone, follow, current, attack, nowMs)) {
+                return;
+            }
+        }
         // Last few blocks on open, level ground: walk straight at the mob. Re-planning a
         // path for every step the mob takes made the bot run circles in front of it.
         if (attack != null && com.coflnet.pathing.DirectChase.possible(client.level, player, current, directChase)) {
@@ -673,6 +714,10 @@ public final class FollowFeature {
     }
 
     private static void stopBaritone() {
+        if (seekingSpot) {
+            stopSeeking(primary());
+        }
+        stopRoam(primary());
         if (directChase) {
             endDirectChase(Minecraft.getInstance());
         }
@@ -717,8 +762,134 @@ public final class FollowFeature {
     }
 
     private static boolean hitOnce(Entity entity) {
+        long now = System.currentTimeMillis();
         Long until = HIT_ONCE.get(entity.getUUID());
-        return until != null && until > System.currentTimeMillis();
+        if (until != null && until > now) {
+            return true;
+        }
+        Long blocked = UNREACHABLE.get(entity.getUUID());
+        return blocked != null && blocked > now;
+    }
+
+    /**
+     * The target can not be hit from where we are: path to a standable spot in reach that has a
+     * free line to its hitbox (re-planned every 1.5 s as it moves). No such spot, or not there
+     * after {@value #SEEK_GIVE_UP_MS} ms: the target counts as unreachable for a while and the
+     * next one is taken. Returns true when this tick is handled.
+     */
+    private static boolean seekVisibleSpot(Minecraft client, LocalPlayer player, IBaritone baritone,
+                                           IFollowProcess follow, Entity current, LivingEntity attack, long nowMs) {
+        if (!seekingSpot || seekFor != current || nowMs - seekGoalAt > 1_500L) {
+            double reach = Math.min(Math.clamp(PlayerSettings.followDistance, 1, 16), PlayerSettings.killAuraRange);
+            baritone.api.pathing.goals.Goal goal = com.coflnet.pathing.VisibleGoal.of(client.level, current, 2, reach);
+            if (!(goal instanceof com.coflnet.pathing.VisibleGoal)) {
+                giveUp(baritone, current, "kein Platz mit freier Schlaglinie");
+                return true;
+            }
+            if (!seekingSpot || seekFor != current) {
+                seekStartedAt = nowMs;
+                System.out.println("[Combat] Ziel verdeckt - laufe zu einem Platz mit freier Schlaglinie");
+            }
+            if (issued != null) {
+                follow.cancel();
+                issued = null;
+            }
+            if (directChase) {
+                endDirectChase(client);
+            }
+            baritone.getCustomGoalProcess().setGoalAndPath(goal);
+            seekingSpot = true;
+            seekFor = current;
+            seekGoalAt = nowMs;
+        }
+        if (nowMs - seekStartedAt > SEEK_GIVE_UP_MS) {
+            giveUp(baritone, current, "Platz mit freier Schlaglinie nicht erreicht");
+            return true;
+        }
+        active = true;
+        KillAuraFeature.setForcedTarget(entity -> entity == attack,
+                PlayerSettings.followCpsMin, PlayerSettings.followCpsMax);
+        updateLook(client, player, baritone, current, true);
+        return true;
+    }
+
+    /**
+     * No target in sight: walk towards a spot picked from the session's kill map (denser = far
+     * likelier), re-picked when reached or after half a minute. False without any kills.
+     */
+    private static boolean roam(Minecraft client, LocalPlayer player, long nowMs) {
+        if (com.coflnet.pathing.KillMap.size() == 0) {
+            return false;
+        }
+        IBaritone baritone = primary();
+        if (baritone == null) {
+            return false;
+        }
+        boolean reached = roamTarget != null
+                && Math.hypot(player.getX() - roamTarget.x, player.getZ() - roamTarget.z) < 3.0;
+        if (roamTarget == null || reached || nowMs - roamSince > ROAM_REPICK_MS
+                || !baritone.getCustomGoalProcess().isActive()) {
+            net.minecraft.world.phys.Vec3 pick = com.coflnet.pathing.KillMap.pick(player.position(), 8.0,
+                    () -> ThreadLocalRandom.current().nextDouble());
+            if (pick == null) {
+                return false;
+            }
+            if (issued != null) {
+                baritone.getFollowProcess().cancel();
+                issued = null;
+            }
+            if (directChase) {
+                endDirectChase(client);
+            }
+            if (roamTarget == null) {
+                System.out.println("[Combat] Kein Ziel in Sicht - laufe zur Kill-Zone ("
+                        + com.coflnet.pathing.KillMap.size() + " Kills gemerkt)");
+            }
+            roamTarget = pick;
+            roamSince = nowMs;
+            configure(false);
+            baritone.getCustomGoalProcess().setGoalAndPath(
+                    new baritone.api.pathing.goals.GoalNear(net.minecraft.core.BlockPos.containing(pick), 2));
+        } else {
+            configure(false);
+        }
+        active = true;
+        idleLooking = false;
+        KillAuraFeature.setForcedTarget(null);
+        net.minecraft.world.phys.Vec3 ahead = baritone.getPathingBehavior().isPathing()
+                ? pathAhead(baritone, player) : null;
+        if (ahead != null) {
+            smoothLook = smoothLook == null ? ahead : smoothLook.lerp(ahead, com.coflnet.pathing.MovementStyle.lookBlend());
+            setLook(player, smoothLook);
+            keepNearWalkingDirection(baritone);
+            walkingLook = true;
+        }
+        return true;
+    }
+
+    private static void stopRoam(IBaritone baritone) {
+        if (roamTarget != null && baritone != null && !seekingSpot) {
+            baritone.getCustomGoalProcess().onLostControl();
+        }
+        roamTarget = null;
+    }
+
+    private static void giveUp(IBaritone baritone, Entity target, String why) {
+        UNREACHABLE.put(target.getUUID(), System.currentTimeMillis() + UNREACHABLE_MS);
+        System.out.println("[Combat] Ziel aufgegeben (" + why + "): " + name(target));
+        stopSeeking(baritone);
+        if (followed == target) {
+            followed = null;
+            issued = null;
+        }
+    }
+
+    private static void stopSeeking(IBaritone baritone) {
+        if (seekingSpot && baritone != null) {
+            baritone.getCustomGoalProcess().onLostControl();
+        }
+        seekingSpot = false;
+        seekFor = null;
     }
 
     /** First queued target that is still a valid target, or null. */

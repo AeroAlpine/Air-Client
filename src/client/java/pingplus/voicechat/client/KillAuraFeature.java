@@ -137,7 +137,8 @@ public final class KillAuraFeature {
         // exact attack ray, because visibility alone does not mean our current aim is unobstructed.
         return distanceSquared(client, entity) <= reach * reach
                 && client.player.isWithinAttackRange(client.player.getMainHandItem(), entity.getBoundingBox(), 0)
-                && client.player.hasLineOfSight(entity);
+                // some part of the hitbox reachable without a block (leaves, slab ...) in between
+                && com.coflnet.pathing.VisibleGoal.seesAny(client.level, client.player.getEyePosition(), entity);
     }
 
     /** Called from the client end-tick callback to acquire a target and attempt one attack. */
@@ -218,7 +219,10 @@ public final class KillAuraFeature {
         if (!active(client) || !valid(client, target)) { target = null; return; }
         // Aim at the center of the hitbox for a stable reference point. Subtracting our eye
         // position turns that world-space point into a direction relative to the player.
-        Vec3 delta = target.getBoundingBox().getCenter().subtract(client.player.getEyePosition());
+        // Aim at a part of the hitbox that can really be hit: the centre may be behind a slab edge
+        // or a leaf while the head is free - aiming at the centre then never let a hit through.
+        Vec3 aimAt = com.coflnet.pathing.VisibleGoal.visibleAim(client.level, client.player.getEyePosition(), target);
+        Vec3 delta = (aimAt != null ? aimAt : target.getBoundingBox().getCenter()).subtract(client.player.getEyePosition());
         // atan2 gives the horizontal heading in radians. Convert to degrees, then subtract
         // 90 to match Minecraft's yaw convention (yaw 0 faces positive Z).
         float yaw = (float)Math.toDegrees(Math.atan2(delta.z, delta.x)) - 90;

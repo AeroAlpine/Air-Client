@@ -47,14 +47,14 @@ public final class PathfinderConfig {
     /** Blocks a normal right-click teleport goes (8 + tuned transmission). */
     public int aotvTeleportBlocks = 12;
     /** Only warp when it saves at least as much time as walking this many blocks. */
-    public int aotvMinGain = 8;
+    public int aotvMinGain = 6;
     /**
      * Extra cost of one etherwarp in ticks on top of the time it really takes (switching,
      * sneaking, turning): stands for the mana. Higher = etherwarp only for clearly better routes.
      */
-    public double etherwarpCostTicks = 25.0;
+    public double etherwarpCostTicks = 18.0;
     /** Extra cost of one teleport (mana) in ticks. */
-    public double teleportCostTicks = 4.0;
+    public double teleportCostTicks = 3.0;
     /** Most etherwarps planned in a row. */
     public int etherwarpMaxChain = 20;
     /** How fast the camera turns for a teleport or an etherwarp (degrees per second). */
@@ -77,7 +77,7 @@ public final class PathfinderConfig {
 
     /** Bumped when defaults change; older files (no field = 0) get the new defaults once. */
     public int configVersion;
-    static final int CURRENT_VERSION = 3;
+    static final int CURRENT_VERSION = 4;
 
     private static final Gson GSON = new GsonBuilder().setPrettyPrinting().create();
     private static volatile PathfinderConfig instance;
@@ -142,6 +142,20 @@ public final class PathfinderConfig {
                 warpRotationSpeed = 650.0;
             }
             configVersion = 3;
+            save();
+        }
+        if (configVersion < 4) {
+            // warp a little more readily (only values still at the old defaults)
+            if (etherwarpCostTicks == 25.0) {
+                etherwarpCostTicks = 18.0;
+            }
+            if (teleportCostTicks == 4.0) {
+                teleportCostTicks = 3.0;
+            }
+            if (aotvMinGain == 8) {
+                aotvMinGain = 6;
+            }
+            configVersion = 4;
             save();
         }
     }

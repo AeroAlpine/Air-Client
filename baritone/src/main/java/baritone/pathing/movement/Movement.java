@@ -133,6 +133,18 @@ public abstract class Movement implements IMovement, MovementHelper {
         }
 
         // If the movement target has to force the new rotations, or we aren't using silent move, then force the rotations
+        if (carrot != null && !currentState.getTarget().hasToForceRotations()
+                && currentState.getStatus() == MovementStatus.RUNNING
+                && (this instanceof baritone.pathing.movement.movements.MovementTraverse
+                || this instanceof baritone.pathing.movement.movements.MovementDiagonal)
+                && currentState.getTarget().getRotation().isPresent()) {
+            // walk at the smoothing point (farther down the path) instead of this block's centre
+            Rotation toCarrot = RotationUtils.calcRotationFromVec3d(ctx.playerHead(),
+                    new net.minecraft.world.phys.Vec3(carrot.x, ctx.playerHead().y, carrot.z),
+                    ctx.playerRotations());
+            currentState.setTarget(new MovementState.MovementTarget(
+                    toCarrot.withPitch(currentState.getTarget().getRotation().get().getPitch()), false));
+        }
         currentState.getTarget().getRotation().ifPresent(rotation -> {
             baritone.getLookBehavior().updateTarget(
                     rotation,
@@ -195,6 +207,13 @@ public abstract class Movement implements IMovement, MovementHelper {
                         net.minecraft.util.Mth.sin(wantYaw * rad),
                         net.minecraft.util.Mth.cos(wantYaw * rad))))
                 .ifPresent(option -> option.setInputs(state));
+    }
+
+    /** Air Client: path smoothing point to walk towards instead of the block centre (or null). */
+    private net.minecraft.world.phys.Vec3 carrot;
+
+    public void setCarrot(net.minecraft.world.phys.Vec3 carrot) {
+        this.carrot = carrot;
     }
 
     protected boolean prepared(MovementState state) {

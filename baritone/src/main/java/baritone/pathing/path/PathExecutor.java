@@ -220,6 +220,44 @@ public class PathExecutor implements IPathExecutor, Helper {
             clearKeys();
             return true;
         }
+        // Air Client: already standing at the end of the NEXT walking movement (two ahead).
+        // Baritone only skips ahead from three movements on; on half-slab stairs the player is
+        // a block further than counted (half steps), the current movement led him back to the
+        // previous block and he stepped back and forth on the spot (path recorder: 70 ticks,
+        // 143 rotation snaps until the watchdog stopped it). Walking moves only, on the ground.
+        // (Its own end is reported by the movement, three and more ahead by the skip above.)
+        if (ctx.player().onGround() && pathPosition + 1 < path.movements().size()) {
+            IMovement next = path.movements().get(pathPosition + 1);
+            if (isWalkingMove(movement) && isWalkingMove(next) && next.getDest().equals(whereAmI)) {
+                pathPosition += 2;
+                onChangeInPathPosition();
+                onTick();
+                return false;
+            }
+        }
+        movement.setCarrot(null);
+        if (Baritone.settings().pathSmoothing.value) {
+            int ahead = smoothingTarget(whereAmI);
+            if (ahead > pathPosition) {
+                // Cut a corner and stand on a later movement's start already: those before it
+                // are done. Without this the current movement led us back to its block centre.
+                for (int j = pathPosition + 1; j <= ahead; j++) {
+                    if (path.movements().get(j).getSrc().equals(whereAmI)) {
+                        pathPosition = j;
+                        onChangeInPathPosition();
+                        onTick();
+                        return false;
+                    }
+                }
+                Vec3 carrot = VecUtils.getBlockPosCenter(path.movements().get(ahead).getDest());
+                double fx = carrot.x - ctx.player().position().x;
+                double fz = carrot.z - ctx.player().position().z;
+                if (fx * fx + fz * fz > 1.0) {
+                    // never a point (almost) under our feet: the aim towards it flips every tick
+                    movement.setCarrot(carrot);
+                }
+            }
+        }
         MovementStatus movementStatus = movement.update();
         if (movementStatus == UNREACHABLE || movementStatus == FAILED) {
             logDebug("Movement returns status " + movementStatus);
@@ -249,6 +287,60 @@ public class PathExecutor implements IPathExecutor, Helper {
             }
         }
         return canCancel; // movement is in progress, but if it reports cancellable, PathingBehavior is good to cut onto the next path
+    }
+
+    private static boolean isWalkingMove(IMovement movement) {
+        return movement instanceof MovementTraverse || movement instanceof MovementDiagonal
+                || movement instanceof MovementDescend || movement instanceof MovementAscend;
+    }
+
+    /** Farthest movement ahead whose destination: flat path, straight line walkable. */
+    private int smoothingTarget(BetterBlockPos feet) {
+        int best = pathPosition;
+        if (!ctx.player().onGround()) {
+            return best;
+        }
+        Vec3 from = ctx.player().position();
+        for (int i = pathPosition; i < path.movements().size() && i <= pathPosition + 5; i++) {
+            IMovement m = path.movements().get(i);
+            if (!(m instanceof MovementTraverse || m instanceof MovementDiagonal)) {
+                break;
+            }
+            if (m.getSrc().y != feet.y || m.getDest().y != feet.y) {
+                break;
+            }
+            if (!lineWalkable(from, m.getDest(), feet.y)) {
+                break;
+            }
+            best = i;
+        }
+        return best;
+    }
+
+    /** Body (feet + head, 0.3 to each side) passes on solid ground in a straight line. */
+    private boolean lineWalkable(Vec3 from, BlockPos dest, int y) {
+        double dx = dest.getX() + 0.5 - from.x;
+        double dz = dest.getZ() + 0.5 - from.z;
+        double length = Math.sqrt(dx * dx + dz * dz);
+        if (length < 1.0E-3) {
+            return true;
+        }
+        double ux = dx / length;
+        double uz = dz / length;
+        double sx = -uz * 0.3;
+        double sz = ux * 0.3;
+        for (double t = 0.25; t <= length; t += 0.25) {
+            for (int side = -1; side <= 1; side++) {
+                int bx = (int) Math.floor(from.x + ux * t + sx * side);
+                int bz = (int) Math.floor(from.z + uz * t + sz * side);
+                if (!MovementHelper.canWalkThrough(ctx, new BetterBlockPos(bx, y, bz))
+                        || !MovementHelper.canWalkThrough(ctx, new BetterBlockPos(bx, y + 1, bz))
+                        || !MovementHelper.canWalkOn(ctx, new BetterBlockPos(bx, y - 1, bz))) {
+                    return false;
+                }
+            }
+        }
+        return true;
     }
 
     private Pair<Double, BlockPos> closestPathPos(IPath path) {

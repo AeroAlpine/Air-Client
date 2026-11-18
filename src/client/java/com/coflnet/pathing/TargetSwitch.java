@@ -6,12 +6,15 @@ package com.coflnet.pathing;
  * otherwise flip every tick and the path would be recalculated every tick.
  */
 public final class TargetSwitch {
-    /** The new one must be at least this many blocks closer ... */
-    static final double MIN_GAIN_BLOCKS = 3.0;
-    /** ... and at least this share closer. */
-    static final double MIN_GAIN_SHARE = 0.25;
+    /**
+     * The new one must be at least this many blocks closer (so two mobs at almost the same
+     * distance do not flip every tick) ...
+     */
+    static final double MIN_GAIN_BLOCKS = 1.0;
+    /** ... and at least this share closer: 15 %, a clearly nearer mob is taken at once. */
+    static final double MIN_GAIN_SHARE = 0.15;
     /** Stay with a target at least this long after switching to it. */
-    public static final long HOLD_MS = 1_200L;
+    public static final long HOLD_MS = 400L;
     /** Rough walking detour for a target that can not be seen (behind a wall). */
     public static final double HIDDEN_EXTRA = 8.0;
 
