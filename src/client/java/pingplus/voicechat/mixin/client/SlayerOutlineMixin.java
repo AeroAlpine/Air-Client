@@ -22,6 +22,7 @@ public class SlayerOutlineMixin {
         int rgb = SlayerOutlineRenderer.colorFor(entity.getId());
         // Keep specialized slayer colours when both features select the same mob.
         if (rgb < 0) rgb = MobEspFeature.colorFor(entity);
+        if (rgb < 0) rgb = com.coflnet.mining.MiningFeatures.outlineColor(entity);
         if (rgb >= 0) {
             state.outlineColor = ARGB.opaque(rgb);
         }

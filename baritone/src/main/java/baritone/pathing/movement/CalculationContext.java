@@ -65,6 +65,11 @@ public class CalculationContext {
     public final boolean allowBreak;
     public final List<Block> allowBreakAnyway;
     public final boolean allowParkour;
+    public final boolean allowTeleport;
+    public final boolean allowEtherwarp;
+    public final int teleportReach;
+    public final double teleportCost;
+    public final double etherwarpCost;
     public final boolean allowParkourPlace;
     public final boolean allowJumpAtBuildLimit;
     public final boolean allowParkourAscend;
@@ -111,6 +116,11 @@ public class CalculationContext {
         this.allowBreak = Baritone.settings().allowBreak.value;
         this.allowBreakAnyway = new ArrayList<>(Baritone.settings().allowBreakAnyway.value);
         this.allowParkour = Baritone.settings().allowParkour.value;
+        this.allowTeleport = Baritone.settings().allowTeleportMoves.value;
+        this.allowEtherwarp = Baritone.settings().allowEtherwarpMoves.value;
+        this.teleportReach = Baritone.settings().teleportMoveReach.value;
+        this.teleportCost = Baritone.settings().teleportMoveCost.value;
+        this.etherwarpCost = Baritone.settings().etherwarpMoveCost.value;
         this.allowParkourPlace = Baritone.settings().allowParkourPlace.value;
         this.allowJumpAtBuildLimit = Baritone.settings().allowJumpAtBuildLimit.value;
         this.allowParkourAscend = Baritone.settings().allowParkourAscend.value;

@@ -381,6 +381,21 @@ public final class Settings {
      */
     public final Setting<Boolean> allowParkour = new Setting<>(false);
 
+    /** Air Client: plan AOTV teleports as moves (executed by the Air Client path engine only). */
+    public final Setting<Boolean> allowTeleportMoves = new Setting<>(false);
+
+    /** Air Client: plan etherwarps as moves (executed by the Air Client path engine only). */
+    public final Setting<Boolean> allowEtherwarpMoves = new Setting<>(false);
+
+    /** Air Client: blocks one teleport goes. */
+    public final Setting<Integer> teleportMoveReach = new Setting<>(12);
+
+    /** Air Client: cost of one teleport in ticks (turning, the click, mana). */
+    public final Setting<Double> teleportMoveCost = new Setting<>(12.0);
+
+    /** Air Client: cost of one etherwarp in ticks (sneak, a steady aim, mana). */
+    public final Setting<Double> etherwarpMoveCost = new Setting<>(26.0);
+
     /**
      * Actually pretty reliable.
      * <p>

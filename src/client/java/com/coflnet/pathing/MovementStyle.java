@@ -23,7 +23,8 @@ public final class MovementStyle {
 
     /** How far ahead on the path the camera looks (blocks). */
     public static double lookAheadBlocks() {
-        return 1.5 + 4.0 * calm();
+        // far enough ahead that a zig-zag of single blocks on the path does not swing the view
+        return 3.0 + 6.0 * calm();
     }
 
     /** Share of the camera's turn-speed setting that is used. */
@@ -43,14 +44,22 @@ public final class MovementStyle {
 
     /** Per tick blend towards a new look point (1 = jump to it at once). */
     public static double lookBlend() {
-        return 1.0 - 0.8 * calm();
+        return 1.0 - 0.88 * calm();
     }
 
     /** Idle glance: largest turn left / right (degrees) and the pause between glances (ms). */
     // Less random looking around while searching (it looked twitchy): smaller glances, longer
     // pauses. At the default 70 % calm: up to 18 degrees, every 2.5-5 s.
     public static double idleGlanceDegrees() {
-        return 35.0 - 25.0 * calm();
+        return (35.0 - 25.0 * calm()) * lookAround();
+    }
+
+    /**
+     * Looking around while walking (drift, side glances, idle glances) is switched off for now:
+     * the camera only follows the path. Kept as one switch point in case it comes back.
+     */
+    public static double lookAround() {
+        return 0.0;
     }
 
     public static long idleGlanceMinMs() {

@@ -122,6 +122,9 @@ public final class SkyblockLocation {
                 String line = ScreenUtil.cleanName(team.getPlayerPrefix().getString()
                         + team.getPlayerSuffix().getString());
                 int index = line.indexOf('⏣');
+                if (index < 0 && !line.isEmpty() && line.charAt(0) >= '\uE000' && line.charAt(0) <= '\uF8FF') {
+                    index = 0; // Hypixel's own location glyph (resource pack) instead of the old symbol
+                }
                 if (index < 0) {
                     index = line.indexOf('ф');
                 }

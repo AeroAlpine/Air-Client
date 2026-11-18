@@ -25,5 +25,6 @@ public abstract class DebugRendererMixin {
         renderers.add(new StorageEspRenderer());
         renderers.add(new pingplus.voicechat.client.etherwarp.EtherwarpRenderer());
         renderers.add(new com.coflnet.pathing.PathOverlayRenderer());
+        renderers.add(new com.coflnet.mining.MiningRenderer());
     }
 }

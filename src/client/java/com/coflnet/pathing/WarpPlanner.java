@@ -333,22 +333,61 @@ public final class WarpPlanner {
 
     /** A point on the top of {@code target} the etherwarp ray from {@code eye} really hits, or null. */
     private static Vec3 visibleAim(Level level, Vec3 eye, BlockPos target, boolean corners) {
+        return etherwarpAim(level, eye, target, corners);
+    }
+
+    /**
+     * A point to look at for an etherwarp onto {@code target}: on the top of the block's REAL
+     * shape (a slab's top is half a block lower, stairs have two heights, a cauldron is hollow -
+     * aiming at the top of the full cube looks into the air above them and the warp fails). It
+     * must be hit both by the block-grid ray (what the warp checks) and by a ray against the real
+     * shapes (what the server sees). Null when no such point is visible.
+     */
+    public static Vec3 etherwarpAim(Level level, Vec3 eye, BlockPos target, boolean corners) {
         double[][] offsets = corners
-                ? new double[][]{{0.5, 0.5}, {0.25, 0.25}, {0.75, 0.75}, {0.25, 0.75}, {0.75, 0.25}}
+                ? new double[][]{{0.5, 0.5}, {0.3, 0.3}, {0.7, 0.7}, {0.3, 0.7}, {0.7, 0.3}, {0.5, 0.25}, {0.5, 0.75},
+                {0.25, 0.5}, {0.75, 0.5}}
                 : new double[][]{{0.5, 0.5}};
         for (double[] o : offsets) {
-            Vec3 aim = new Vec3(target.getX() + o[0], target.getY() + 0.95, target.getZ() + o[1]);
+            double top = shapeTop(level, target, o[0], o[1]);
+            if (Double.isNaN(top)) {
+                continue; // nothing of the block there (the hollow of a cauldron, the low side of stairs ...)
+            }
+            Vec3 aim = new Vec3(target.getX() + o[0], target.getY() + top - 0.04, target.getZ() + o[1]);
             double dist = aim.distanceTo(eye);
             if (dist > EtherwarpHelper.MAX_RANGE || dist < 1.5) {
                 return null;
             }
-            Optional<EtherwarpHelper.RayHit> hit = EtherwarpHelper.raycast(level, eye, aim.subtract(eye),
-                    EtherwarpHelper.MAX_RANGE);
-            if (hit.isPresent() && hit.get().pos().equals(target)) {
+            Vec3 dir = aim.subtract(eye);
+            Optional<EtherwarpHelper.RayHit> hit = EtherwarpHelper.raycast(level, eye, dir, EtherwarpHelper.MAX_RANGE);
+            if (hit.isEmpty() || !hit.get().pos().equals(target)) {
+                continue;
+            }
+            net.minecraft.world.phys.BlockHitResult real = level.clip(new net.minecraft.world.level.ClipContext(eye,
+                    aim.add(dir.normalize().scale(0.1)), net.minecraft.world.level.ClipContext.Block.OUTLINE,
+                    net.minecraft.world.level.ClipContext.Fluid.NONE,
+                    net.minecraft.world.phys.shapes.CollisionContext.empty()));
+            if (real.getType() == net.minecraft.world.phys.HitResult.Type.BLOCK && real.getBlockPos().equals(target)
+                    && real.getDirection() == net.minecraft.core.Direction.UP) {
                 return aim;
             }
         }
         return null;
+    }
+
+    /** Height (0..1.5) of the block's real outline at ({@code ox}, {@code oz}) inside it, NaN if none there. */
+    public static double shapeTop(Level level, BlockPos pos, double ox, double oz) {
+        net.minecraft.world.phys.shapes.VoxelShape shape = level.getBlockState(pos).getShape(level, pos);
+        if (shape.isEmpty()) {
+            return Double.NaN;
+        }
+        double top = Double.NaN;
+        for (net.minecraft.world.phys.AABB b : shape.toAabbs()) {
+            if (ox >= b.minX - 1.0E-6 && ox <= b.maxX + 1.0E-6 && oz >= b.minZ - 1.0E-6 && oz <= b.maxZ + 1.0E-6) {
+                top = Double.isNaN(top) ? b.maxY : Math.max(top, b.maxY);
+            }
+        }
+        return top;
     }
 
     // ================================================================ stage 2: teleport

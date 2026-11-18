@@ -1096,6 +1096,9 @@ public final class LowballingMod {
             // walking, turning, chatting: nothing may be open
             default -> screenOpen || ahBusy;
         };
+        if (com.coflnet.failsafe.Failsafe.holding() && state != State.IDLE) {
+            block = true;
+        }
         if (block) {
             if (pausedAt == 0) {
                 pausedAt = now;

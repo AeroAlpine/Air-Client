@@ -72,6 +72,10 @@ public final class PathfinderConfig {
     public boolean recorderChat = true;
     /** How calm the camera moves while a bot walks (0 = snappy, 100 = very calm). */
     public double movementCalmness = 70.0;
+    /** Walk Baritone's path as a tightened line (LineFollower) instead of block by block. */
+    public boolean lineFollow = true;
+    /** How much the camera looks around while walking (drift, side glances, idle glances), 0-100 %; 0 = never. */
+    public double lookAround = 40.0;
     /** Most degrees the walking direction / server rotation may turn per tick (0 = unlimited). */
     public double maxTurnPerTick = 40.0;
 

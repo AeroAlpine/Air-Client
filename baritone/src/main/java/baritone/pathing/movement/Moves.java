@@ -370,6 +370,455 @@ public enum Moves {
         public void apply(CalculationContext context, int x, int y, int z, MutableMoveResult result) {
             MovementParkour.cost(context, x, y, z, Direction.WEST, result);
         }
+    },
+    TELEPORT_NORTH_FLAT(0, 0, 0, true, true) {
+        @Override
+        public Movement apply0(CalculationContext context, BetterBlockPos src) {
+            return baritone.pathing.movement.movements.MovementWarp.create(context, src,
+                    baritone.pathing.movement.movements.MovementWarp.Kind.TELEPORT, 180.0f, 0.0f);
+        }
+
+        @Override
+        public void apply(CalculationContext context, int x, int y, int z, MutableMoveResult result) {
+            baritone.pathing.movement.movements.MovementWarp.cost(context, x, y, z,
+                    baritone.pathing.movement.movements.MovementWarp.Kind.TELEPORT, 180.0f, 0.0f, result);
+        }
+    },
+    TELEPORT_NORTH_DOWN(0, 0, 0, true, true) {
+        @Override
+        public Movement apply0(CalculationContext context, BetterBlockPos src) {
+            return baritone.pathing.movement.movements.MovementWarp.create(context, src,
+                    baritone.pathing.movement.movements.MovementWarp.Kind.TELEPORT, 180.0f, 35.0f);
+        }
+
+        @Override
+        public void apply(CalculationContext context, int x, int y, int z, MutableMoveResult result) {
+            baritone.pathing.movement.movements.MovementWarp.cost(context, x, y, z,
+                    baritone.pathing.movement.movements.MovementWarp.Kind.TELEPORT, 180.0f, 35.0f, result);
+        }
+    },
+    TELEPORT_NORTHEAST_FLAT(0, 0, 0, true, true) {
+        @Override
+        public Movement apply0(CalculationContext context, BetterBlockPos src) {
+            return baritone.pathing.movement.movements.MovementWarp.create(context, src,
+                    baritone.pathing.movement.movements.MovementWarp.Kind.TELEPORT, -135.0f, 0.0f);
+        }
+
+        @Override
+        public void apply(CalculationContext context, int x, int y, int z, MutableMoveResult result) {
+            baritone.pathing.movement.movements.MovementWarp.cost(context, x, y, z,
+                    baritone.pathing.movement.movements.MovementWarp.Kind.TELEPORT, -135.0f, 0.0f, result);
+        }
+    },
+    TELEPORT_NORTHEAST_DOWN(0, 0, 0, true, true) {
+        @Override
+        public Movement apply0(CalculationContext context, BetterBlockPos src) {
+            return baritone.pathing.movement.movements.MovementWarp.create(context, src,
+                    baritone.pathing.movement.movements.MovementWarp.Kind.TELEPORT, -135.0f, 35.0f);
+        }
+
+        @Override
+        public void apply(CalculationContext context, int x, int y, int z, MutableMoveResult result) {
+            baritone.pathing.movement.movements.MovementWarp.cost(context, x, y, z,
+                    baritone.pathing.movement.movements.MovementWarp.Kind.TELEPORT, -135.0f, 35.0f, result);
+        }
+    },
+    TELEPORT_EAST_FLAT(0, 0, 0, true, true) {
+        @Override
+        public Movement apply0(CalculationContext context, BetterBlockPos src) {
+            return baritone.pathing.movement.movements.MovementWarp.create(context, src,
+                    baritone.pathing.movement.movements.MovementWarp.Kind.TELEPORT, -90.0f, 0.0f);
+        }
+
+        @Override
+        public void apply(CalculationContext context, int x, int y, int z, MutableMoveResult result) {
+            baritone.pathing.movement.movements.MovementWarp.cost(context, x, y, z,
+                    baritone.pathing.movement.movements.MovementWarp.Kind.TELEPORT, -90.0f, 0.0f, result);
+        }
+    },
+    TELEPORT_EAST_DOWN(0, 0, 0, true, true) {
+        @Override
+        public Movement apply0(CalculationContext context, BetterBlockPos src) {
+            return baritone.pathing.movement.movements.MovementWarp.create(context, src,
+                    baritone.pathing.movement.movements.MovementWarp.Kind.TELEPORT, -90.0f, 35.0f);
+        }
+
+        @Override
+        public void apply(CalculationContext context, int x, int y, int z, MutableMoveResult result) {
+            baritone.pathing.movement.movements.MovementWarp.cost(context, x, y, z,
+                    baritone.pathing.movement.movements.MovementWarp.Kind.TELEPORT, -90.0f, 35.0f, result);
+        }
+    },
+    TELEPORT_SOUTHEAST_FLAT(0, 0, 0, true, true) {
+        @Override
+        public Movement apply0(CalculationContext context, BetterBlockPos src) {
+            return baritone.pathing.movement.movements.MovementWarp.create(context, src,
+                    baritone.pathing.movement.movements.MovementWarp.Kind.TELEPORT, -45.0f, 0.0f);
+        }
+
+        @Override
+        public void apply(CalculationContext context, int x, int y, int z, MutableMoveResult result) {
+            baritone.pathing.movement.movements.MovementWarp.cost(context, x, y, z,
+                    baritone.pathing.movement.movements.MovementWarp.Kind.TELEPORT, -45.0f, 0.0f, result);
+        }
+    },
+    TELEPORT_SOUTHEAST_DOWN(0, 0, 0, true, true) {
+        @Override
+        public Movement apply0(CalculationContext context, BetterBlockPos src) {
+            return baritone.pathing.movement.movements.MovementWarp.create(context, src,
+                    baritone.pathing.movement.movements.MovementWarp.Kind.TELEPORT, -45.0f, 35.0f);
+        }
+
+        @Override
+        public void apply(CalculationContext context, int x, int y, int z, MutableMoveResult result) {
+            baritone.pathing.movement.movements.MovementWarp.cost(context, x, y, z,
+                    baritone.pathing.movement.movements.MovementWarp.Kind.TELEPORT, -45.0f, 35.0f, result);
+        }
+    },
+    TELEPORT_SOUTH_FLAT(0, 0, 0, true, true) {
+        @Override
+        public Movement apply0(CalculationContext context, BetterBlockPos src) {
+            return baritone.pathing.movement.movements.MovementWarp.create(context, src,
+                    baritone.pathing.movement.movements.MovementWarp.Kind.TELEPORT, 0.0f, 0.0f);
+        }
+
+        @Override
+        public void apply(CalculationContext context, int x, int y, int z, MutableMoveResult result) {
+            baritone.pathing.movement.movements.MovementWarp.cost(context, x, y, z,
+                    baritone.pathing.movement.movements.MovementWarp.Kind.TELEPORT, 0.0f, 0.0f, result);
+        }
+    },
+    TELEPORT_SOUTH_DOWN(0, 0, 0, true, true) {
+        @Override
+        public Movement apply0(CalculationContext context, BetterBlockPos src) {
+            return baritone.pathing.movement.movements.MovementWarp.create(context, src,
+                    baritone.pathing.movement.movements.MovementWarp.Kind.TELEPORT, 0.0f, 35.0f);
+        }
+
+        @Override
+        public void apply(CalculationContext context, int x, int y, int z, MutableMoveResult result) {
+            baritone.pathing.movement.movements.MovementWarp.cost(context, x, y, z,
+                    baritone.pathing.movement.movements.MovementWarp.Kind.TELEPORT, 0.0f, 35.0f, result);
+        }
+    },
+    TELEPORT_SOUTHWEST_FLAT(0, 0, 0, true, true) {
+        @Override
+        public Movement apply0(CalculationContext context, BetterBlockPos src) {
+            return baritone.pathing.movement.movements.MovementWarp.create(context, src,
+                    baritone.pathing.movement.movements.MovementWarp.Kind.TELEPORT, 45.0f, 0.0f);
+        }
+
+        @Override
+        public void apply(CalculationContext context, int x, int y, int z, MutableMoveResult result) {
+            baritone.pathing.movement.movements.MovementWarp.cost(context, x, y, z,
+                    baritone.pathing.movement.movements.MovementWarp.Kind.TELEPORT, 45.0f, 0.0f, result);
+        }
+    },
+    TELEPORT_SOUTHWEST_DOWN(0, 0, 0, true, true) {
+        @Override
+        public Movement apply0(CalculationContext context, BetterBlockPos src) {
+            return baritone.pathing.movement.movements.MovementWarp.create(context, src,
+                    baritone.pathing.movement.movements.MovementWarp.Kind.TELEPORT, 45.0f, 35.0f);
+        }
+
+        @Override
+        public void apply(CalculationContext context, int x, int y, int z, MutableMoveResult result) {
+            baritone.pathing.movement.movements.MovementWarp.cost(context, x, y, z,
+                    baritone.pathing.movement.movements.MovementWarp.Kind.TELEPORT, 45.0f, 35.0f, result);
+        }
+    },
+    TELEPORT_WEST_FLAT(0, 0, 0, true, true) {
+        @Override
+        public Movement apply0(CalculationContext context, BetterBlockPos src) {
+            return baritone.pathing.movement.movements.MovementWarp.create(context, src,
+                    baritone.pathing.movement.movements.MovementWarp.Kind.TELEPORT, 90.0f, 0.0f);
+        }
+
+        @Override
+        public void apply(CalculationContext context, int x, int y, int z, MutableMoveResult result) {
+            baritone.pathing.movement.movements.MovementWarp.cost(context, x, y, z,
+                    baritone.pathing.movement.movements.MovementWarp.Kind.TELEPORT, 90.0f, 0.0f, result);
+        }
+    },
+    TELEPORT_WEST_DOWN(0, 0, 0, true, true) {
+        @Override
+        public Movement apply0(CalculationContext context, BetterBlockPos src) {
+            return baritone.pathing.movement.movements.MovementWarp.create(context, src,
+                    baritone.pathing.movement.movements.MovementWarp.Kind.TELEPORT, 90.0f, 35.0f);
+        }
+
+        @Override
+        public void apply(CalculationContext context, int x, int y, int z, MutableMoveResult result) {
+            baritone.pathing.movement.movements.MovementWarp.cost(context, x, y, z,
+                    baritone.pathing.movement.movements.MovementWarp.Kind.TELEPORT, 90.0f, 35.0f, result);
+        }
+    },
+    TELEPORT_NORTHWEST_FLAT(0, 0, 0, true, true) {
+        @Override
+        public Movement apply0(CalculationContext context, BetterBlockPos src) {
+            return baritone.pathing.movement.movements.MovementWarp.create(context, src,
+                    baritone.pathing.movement.movements.MovementWarp.Kind.TELEPORT, 135.0f, 0.0f);
+        }
+
+        @Override
+        public void apply(CalculationContext context, int x, int y, int z, MutableMoveResult result) {
+            baritone.pathing.movement.movements.MovementWarp.cost(context, x, y, z,
+                    baritone.pathing.movement.movements.MovementWarp.Kind.TELEPORT, 135.0f, 0.0f, result);
+        }
+    },
+    TELEPORT_NORTHWEST_DOWN(0, 0, 0, true, true) {
+        @Override
+        public Movement apply0(CalculationContext context, BetterBlockPos src) {
+            return baritone.pathing.movement.movements.MovementWarp.create(context, src,
+                    baritone.pathing.movement.movements.MovementWarp.Kind.TELEPORT, 135.0f, 35.0f);
+        }
+
+        @Override
+        public void apply(CalculationContext context, int x, int y, int z, MutableMoveResult result) {
+            baritone.pathing.movement.movements.MovementWarp.cost(context, x, y, z,
+                    baritone.pathing.movement.movements.MovementWarp.Kind.TELEPORT, 135.0f, 35.0f, result);
+        }
+    },
+    ETHERWARP_NORTH_UP(0, 0, 0, true, true) {
+        @Override
+        public Movement apply0(CalculationContext context, BetterBlockPos src) {
+            return baritone.pathing.movement.movements.MovementWarp.create(context, src,
+                    baritone.pathing.movement.movements.MovementWarp.Kind.ETHERWARP, 180.0f, -28.0f);
+        }
+
+        @Override
+        public void apply(CalculationContext context, int x, int y, int z, MutableMoveResult result) {
+            baritone.pathing.movement.movements.MovementWarp.cost(context, x, y, z,
+                    baritone.pathing.movement.movements.MovementWarp.Kind.ETHERWARP, 180.0f, -28.0f, result);
+        }
+    },
+    ETHERWARP_NORTH_LEVEL(0, 0, 0, true, true) {
+        @Override
+        public Movement apply0(CalculationContext context, BetterBlockPos src) {
+            return baritone.pathing.movement.movements.MovementWarp.create(context, src,
+                    baritone.pathing.movement.movements.MovementWarp.Kind.ETHERWARP, 180.0f, -6.0f);
+        }
+
+        @Override
+        public void apply(CalculationContext context, int x, int y, int z, MutableMoveResult result) {
+            baritone.pathing.movement.movements.MovementWarp.cost(context, x, y, z,
+                    baritone.pathing.movement.movements.MovementWarp.Kind.ETHERWARP, 180.0f, -6.0f, result);
+        }
+    },
+    ETHERWARP_NORTHEAST_UP(0, 0, 0, true, true) {
+        @Override
+        public Movement apply0(CalculationContext context, BetterBlockPos src) {
+            return baritone.pathing.movement.movements.MovementWarp.create(context, src,
+                    baritone.pathing.movement.movements.MovementWarp.Kind.ETHERWARP, -135.0f, -28.0f);
+        }
+
+        @Override
+        public void apply(CalculationContext context, int x, int y, int z, MutableMoveResult result) {
+            baritone.pathing.movement.movements.MovementWarp.cost(context, x, y, z,
+                    baritone.pathing.movement.movements.MovementWarp.Kind.ETHERWARP, -135.0f, -28.0f, result);
+        }
+    },
+    ETHERWARP_NORTHEAST_LEVEL(0, 0, 0, true, true) {
+        @Override
+        public Movement apply0(CalculationContext context, BetterBlockPos src) {
+            return baritone.pathing.movement.movements.MovementWarp.create(context, src,
+                    baritone.pathing.movement.movements.MovementWarp.Kind.ETHERWARP, -135.0f, -6.0f);
+        }
+
+        @Override
+        public void apply(CalculationContext context, int x, int y, int z, MutableMoveResult result) {
+            baritone.pathing.movement.movements.MovementWarp.cost(context, x, y, z,
+                    baritone.pathing.movement.movements.MovementWarp.Kind.ETHERWARP, -135.0f, -6.0f, result);
+        }
+    },
+    ETHERWARP_EAST_UP(0, 0, 0, true, true) {
+        @Override
+        public Movement apply0(CalculationContext context, BetterBlockPos src) {
+            return baritone.pathing.movement.movements.MovementWarp.create(context, src,
+                    baritone.pathing.movement.movements.MovementWarp.Kind.ETHERWARP, -90.0f, -28.0f);
+        }
+
+        @Override
+        public void apply(CalculationContext context, int x, int y, int z, MutableMoveResult result) {
+            baritone.pathing.movement.movements.MovementWarp.cost(context, x, y, z,
+                    baritone.pathing.movement.movements.MovementWarp.Kind.ETHERWARP, -90.0f, -28.0f, result);
+        }
+    },
+    ETHERWARP_EAST_LEVEL(0, 0, 0, true, true) {
+        @Override
+        public Movement apply0(CalculationContext context, BetterBlockPos src) {
+            return baritone.pathing.movement.movements.MovementWarp.create(context, src,
+                    baritone.pathing.movement.movements.MovementWarp.Kind.ETHERWARP, -90.0f, -6.0f);
+        }
+
+        @Override
+        public void apply(CalculationContext context, int x, int y, int z, MutableMoveResult result) {
+            baritone.pathing.movement.movements.MovementWarp.cost(context, x, y, z,
+                    baritone.pathing.movement.movements.MovementWarp.Kind.ETHERWARP, -90.0f, -6.0f, result);
+        }
+    },
+    ETHERWARP_SOUTHEAST_UP(0, 0, 0, true, true) {
+        @Override
+        public Movement apply0(CalculationContext context, BetterBlockPos src) {
+            return baritone.pathing.movement.movements.MovementWarp.create(context, src,
+                    baritone.pathing.movement.movements.MovementWarp.Kind.ETHERWARP, -45.0f, -28.0f);
+        }
+
+        @Override
+        public void apply(CalculationContext context, int x, int y, int z, MutableMoveResult result) {
+            baritone.pathing.movement.movements.MovementWarp.cost(context, x, y, z,
+                    baritone.pathing.movement.movements.MovementWarp.Kind.ETHERWARP, -45.0f, -28.0f, result);
+        }
+    },
+    ETHERWARP_SOUTHEAST_LEVEL(0, 0, 0, true, true) {
+        @Override
+        public Movement apply0(CalculationContext context, BetterBlockPos src) {
+            return baritone.pathing.movement.movements.MovementWarp.create(context, src,
+                    baritone.pathing.movement.movements.MovementWarp.Kind.ETHERWARP, -45.0f, -6.0f);
+        }
+
+        @Override
+        public void apply(CalculationContext context, int x, int y, int z, MutableMoveResult result) {
+            baritone.pathing.movement.movements.MovementWarp.cost(context, x, y, z,
+                    baritone.pathing.movement.movements.MovementWarp.Kind.ETHERWARP, -45.0f, -6.0f, result);
+        }
+    },
+    ETHERWARP_SOUTH_UP(0, 0, 0, true, true) {
+        @Override
+        public Movement apply0(CalculationContext context, BetterBlockPos src) {
+            return baritone.pathing.movement.movements.MovementWarp.create(context, src,
+                    baritone.pathing.movement.movements.MovementWarp.Kind.ETHERWARP, 0.0f, -28.0f);
+        }
+
+        @Override
+        public void apply(CalculationContext context, int x, int y, int z, MutableMoveResult result) {
+            baritone.pathing.movement.movements.MovementWarp.cost(context, x, y, z,
+                    baritone.pathing.movement.movements.MovementWarp.Kind.ETHERWARP, 0.0f, -28.0f, result);
+        }
+    },
+    ETHERWARP_SOUTH_LEVEL(0, 0, 0, true, true) {
+        @Override
+        public Movement apply0(CalculationContext context, BetterBlockPos src) {
+            return baritone.pathing.movement.movements.MovementWarp.create(context, src,
+                    baritone.pathing.movement.movements.MovementWarp.Kind.ETHERWARP, 0.0f, -6.0f);
+        }
+
+        @Override
+        public void apply(CalculationContext context, int x, int y, int z, MutableMoveResult result) {
+            baritone.pathing.movement.movements.MovementWarp.cost(context, x, y, z,
+                    baritone.pathing.movement.movements.MovementWarp.Kind.ETHERWARP, 0.0f, -6.0f, result);
+        }
+    },
+    ETHERWARP_SOUTHWEST_UP(0, 0, 0, true, true) {
+        @Override
+        public Movement apply0(CalculationContext context, BetterBlockPos src) {
+            return baritone.pathing.movement.movements.MovementWarp.create(context, src,
+                    baritone.pathing.movement.movements.MovementWarp.Kind.ETHERWARP, 45.0f, -28.0f);
+        }
+
+        @Override
+        public void apply(CalculationContext context, int x, int y, int z, MutableMoveResult result) {
+            baritone.pathing.movement.movements.MovementWarp.cost(context, x, y, z,
+                    baritone.pathing.movement.movements.MovementWarp.Kind.ETHERWARP, 45.0f, -28.0f, result);
+        }
+    },
+    ETHERWARP_SOUTHWEST_LEVEL(0, 0, 0, true, true) {
+        @Override
+        public Movement apply0(CalculationContext context, BetterBlockPos src) {
+            return baritone.pathing.movement.movements.MovementWarp.create(context, src,
+                    baritone.pathing.movement.movements.MovementWarp.Kind.ETHERWARP, 45.0f, -6.0f);
+        }
+
+        @Override
+        public void apply(CalculationContext context, int x, int y, int z, MutableMoveResult result) {
+            baritone.pathing.movement.movements.MovementWarp.cost(context, x, y, z,
+                    baritone.pathing.movement.movements.MovementWarp.Kind.ETHERWARP, 45.0f, -6.0f, result);
+        }
+    },
+    ETHERWARP_WEST_UP(0, 0, 0, true, true) {
+        @Override
+        public Movement apply0(CalculationContext context, BetterBlockPos src) {
+            return baritone.pathing.movement.movements.MovementWarp.create(context, src,
+                    baritone.pathing.movement.movements.MovementWarp.Kind.ETHERWARP, 90.0f, -28.0f);
+        }
+
+        @Override
+        public void apply(CalculationContext context, int x, int y, int z, MutableMoveResult result) {
+            baritone.pathing.movement.movements.MovementWarp.cost(context, x, y, z,
+                    baritone.pathing.movement.movements.MovementWarp.Kind.ETHERWARP, 90.0f, -28.0f, result);
+        }
+    },
+    ETHERWARP_WEST_LEVEL(0, 0, 0, true, true) {
+        @Override
+        public Movement apply0(CalculationContext context, BetterBlockPos src) {
+            return baritone.pathing.movement.movements.MovementWarp.create(context, src,
+                    baritone.pathing.movement.movements.MovementWarp.Kind.ETHERWARP, 90.0f, -6.0f);
+        }
+
+        @Override
+        public void apply(CalculationContext context, int x, int y, int z, MutableMoveResult result) {
+            baritone.pathing.movement.movements.MovementWarp.cost(context, x, y, z,
+                    baritone.pathing.movement.movements.MovementWarp.Kind.ETHERWARP, 90.0f, -6.0f, result);
+        }
+    },
+    ETHERWARP_NORTHWEST_UP(0, 0, 0, true, true) {
+        @Override
+        public Movement apply0(CalculationContext context, BetterBlockPos src) {
+            return baritone.pathing.movement.movements.MovementWarp.create(context, src,
+                    baritone.pathing.movement.movements.MovementWarp.Kind.ETHERWARP, 135.0f, -28.0f);
+        }
+
+        @Override
+        public void apply(CalculationContext context, int x, int y, int z, MutableMoveResult result) {
+            baritone.pathing.movement.movements.MovementWarp.cost(context, x, y, z,
+                    baritone.pathing.movement.movements.MovementWarp.Kind.ETHERWARP, 135.0f, -28.0f, result);
+        }
+    },
+    ETHERWARP_NORTHWEST_LEVEL(0, 0, 0, true, true) {
+        @Override
+        public Movement apply0(CalculationContext context, BetterBlockPos src) {
+            return baritone.pathing.movement.movements.MovementWarp.create(context, src,
+                    baritone.pathing.movement.movements.MovementWarp.Kind.ETHERWARP, 135.0f, -6.0f);
+        }
+
+        @Override
+        public void apply(CalculationContext context, int x, int y, int z, MutableMoveResult result) {
+            baritone.pathing.movement.movements.MovementWarp.cost(context, x, y, z,
+                    baritone.pathing.movement.movements.MovementWarp.Kind.ETHERWARP, 135.0f, -6.0f, result);
+        }
+    },
+    ETHERWARP_POINT_0(0, 0, 0, true, true) {
+        @Override
+        public Movement apply0(CalculationContext context, BetterBlockPos src) {
+            return baritone.pathing.movement.movements.MovementWarp.createPoint(context, src, 0);
+        }
+
+        @Override
+        public void apply(CalculationContext context, int x, int y, int z, MutableMoveResult result) {
+            baritone.pathing.movement.movements.MovementWarp.pointCost(context, x, y, z, 0, result);
+        }
+    },
+    ETHERWARP_POINT_1(0, 0, 0, true, true) {
+        @Override
+        public Movement apply0(CalculationContext context, BetterBlockPos src) {
+            return baritone.pathing.movement.movements.MovementWarp.createPoint(context, src, 1);
+        }
+
+        @Override
+        public void apply(CalculationContext context, int x, int y, int z, MutableMoveResult result) {
+            baritone.pathing.movement.movements.MovementWarp.pointCost(context, x, y, z, 1, result);
+        }
+    },
+    ETHERWARP_POINT_2(0, 0, 0, true, true) {
+        @Override
+        public Movement apply0(CalculationContext context, BetterBlockPos src) {
+            return baritone.pathing.movement.movements.MovementWarp.createPoint(context, src, 2);
+        }
+
+        @Override
+        public void apply(CalculationContext context, int x, int y, int z, MutableMoveResult result) {
+            baritone.pathing.movement.movements.MovementWarp.pointCost(context, x, y, z, 2, result);
+        }
     };
 
     public final boolean dynamicXZ;

@@ -53,10 +53,34 @@ public final class PathOverlayRenderer extends EntityHitboxDebugRenderer {
         }
         try {
             drawTarget(client);
-            drawPath(client);
+            if (!drawPlan(client, partialTicks)) {
+                drawPath(client);
+            }
         } catch (RuntimeException ignored) {
             // Baritone's path is replaced on its own thread; a frame without overlay is fine.
         }
+    }
+
+    private static final int[] PLAN_COLORS = {0xE04CC2FF, 0xE0FFD24D, 0xE035FFD7, 0xE0C77DFF};
+
+    /** The path engine's line (walk blue, jump yellow, teleport cyan, etherwarp purple), a little above the floor. */
+    private static boolean drawPlan(Minecraft client, float partialTicks) {
+        Vec3 from = client.player.getPosition(partialTicks);
+        List<double[]> plan = PathEngine.overlay(from);
+        if (plan.size() < 2) {
+            return false;
+        }
+        for (int i = 0; i + 1 < plan.size(); i++) {
+            double[] a = plan.get(i), b = plan.get(i + 1);
+            int color = PLAN_COLORS[Math.clamp((int) b[3], 0, 3)];
+            Vec3 va = new Vec3(a[0], a[1] + 0.9, a[2]);
+            Vec3 vb = new Vec3(b[0], b[1] + 0.9, b[2]);
+            Gizmos.line(va, vb, color, b[3] >= 2 ? 1.5f : 2.5f);
+            if (b[3] >= 1) {
+                Gizmos.point(vb, color, 6f);
+            }
+        }
+        return true;
     }
 
     private static void drawTarget(Minecraft client) {

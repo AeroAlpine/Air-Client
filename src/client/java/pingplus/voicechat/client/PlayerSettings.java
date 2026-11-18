@@ -99,6 +99,55 @@ public final class PlayerSettings {
     public static boolean combatPanelEdges = true;
     public static boolean combatPanelFooter = true;
     public static int combatPanelRows = 3;
+    /** Interaction Logger (SkyBlock > Misc). */
+    public static boolean interactionGuis = true;
+    public static boolean interactionChat = true;
+    public static boolean interactionScoreboard = true;
+    public static boolean interactionScanMap = true;
+    public static int interactionScanRadius = 8;
+    /** Dwarven Mines (SkyBlock > Mining). */
+    public static boolean miningCommissions = true;
+    public static boolean miningCommissionPanel = true;
+    public static boolean miningCommissionGlass = true;
+    public static boolean miningCommissionEdges = true;
+    public static boolean miningCommissionFooter = true;
+    public static int miningCommissionRows = 4;
+    public static boolean miningCommissionBlocks = true;
+    public static boolean miningCommissionMobs = true;
+    public static boolean miningCommissionAlert = true;
+    public static int miningBlockRadius = 10;
+    public static boolean miningOres = true;
+    public static boolean miningTitaniumAlert = true;
+    public static boolean miningTitaniumBox = true;
+    public static boolean miningBlockInfo = true;
+    public static boolean miningAlerts = true;
+    public static boolean miningGoblinAlert = true;
+    public static boolean miningGoblinOutline = true;
+    public static boolean miningMonolith = true;
+    public static boolean miningRareAlerts = true;
+    public static boolean miningAlertSound = true;
+    public static boolean miningOverview = true;
+    public static boolean miningOverviewGlass = true;
+    public static boolean miningOverviewEdges = true;
+    public static boolean miningOverviewFooter = true;
+    public static int miningOverviewRows = 5;
+    /** Fail-safe (SkyBlock > Misc). */
+    public static boolean failsafeEnabled = true;
+    public static boolean failsafeChat = true;
+    public static boolean failsafeItem = true;
+    public static boolean failsafeBlocks = true;
+    public static boolean failsafeTroll = true;
+    public static boolean failsafeSound = true;
+    public static int failsafeTeleportBlocks = 8;
+    public static int failsafeRotationDegrees = 35;
+    public static int failsafeBlockCount = 4;
+    public static int failsafeItemMinS = 4;
+    public static int failsafeItemMaxS = 15;
+    /** Commission Bot. */
+    public static boolean miningBotSlayer = true;
+    public static boolean miningBotMining = true;
+    public static boolean miningBotSell = true;
+    public static boolean miningBotChat = false;
 
     static {
         load();

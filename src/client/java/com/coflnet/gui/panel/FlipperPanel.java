@@ -147,7 +147,7 @@ public abstract class FlipperPanel {
 
     private void renderRow(GuiGraphicsExtractor g, Minecraft client, Row row,
                            int y, int muted) {
-        RenderUtils.drawItemStack(g, ItemIconCache.icon(row.tag(), row.name()), 8, y + 4, 1.0f);
+        RenderUtils.drawItemStack(g, iconFor(row), 8, y + 4, 1.0f);
         int rightX = WIDTH - 8;
         int mainWidth = client.font.width(row.main() == null ? "" : row.main());
         int subWidth = client.font.width(row.sub() == null ? "" : row.sub());
@@ -175,6 +175,11 @@ public abstract class FlipperPanel {
                     GlassStyle.alpha(GlassStyle.STATUS, .15f));
             g.fill(30, barY, 30 + filled, barY + 2, GlassStyle.STATUS);
         }
+    }
+
+    /** Icon left of a row; panels that are not about Bazaar/AH items pick their own. */
+    protected net.minecraft.world.item.ItemStack iconFor(Row row) {
+        return ItemIconCache.icon(row.tag(), row.name());
     }
 
     private List<Row> exampleRows() {
