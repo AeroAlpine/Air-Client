@@ -59,7 +59,7 @@ public final class WarpPlanner {
     }
 
     /** Ticks the bot needs for the parts of a warp that do not depend on the turn. */
-    private static final double ETHER_HANDLING_TICKS = 3 + 3 + 2; // switch + sneak, settle, use + land
+    private static final double ETHER_HANDLING_TICKS = 4 + 3 + 2; // switch + sneak, steady aim, use + land
     private static final double TELEPORT_HANDLING_TICKS = 2 + 2 + 1;
     private static final double EYE = 1.62;
     private static final int TOP_K_SECOND = 6;

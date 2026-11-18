@@ -208,10 +208,12 @@ public final class PathfinderLogicTest {
     }
 
     private static void targetSwitch() {
-        check(!TargetSwitch.shouldSwitch(10, 9, 10_000), "1 block closer: stay");
+        check(!TargetSwitch.shouldSwitch(10, 9, 10_000), "1 of 10 blocks is less than 15 %: stay");
         check(TargetSwitch.shouldSwitch(20, 8, 10_000), "12 blocks closer: switch");
-        check(!TargetSwitch.shouldSwitch(20, 8, 500), "not right after a switch");
-        check(!TargetSwitch.shouldSwitch(30, 25, 10_000), "5 of 30 blocks is less than 25 %");
+        check(!TargetSwitch.shouldSwitch(20, 8, 200), "not right after a switch");
+        check(TargetSwitch.shouldSwitch(30, 25, 10_000), "5 of 30 blocks is more than 15 %: switch");
+        check(!TargetSwitch.shouldSwitch(30, 27, 10_000), "3 of 30 blocks is only 10 %: stay");
+        check(!TargetSwitch.shouldSwitch(3.0, 2.4, 10_000), "close: 0.6 blocks is not worth a switch");
         check(TargetSwitch.effectiveDistance(5, false) > TargetSwitch.effectiveDistance(10, true),
                 "a mob behind a wall counts as further away");
     }

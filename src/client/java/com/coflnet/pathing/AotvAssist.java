@@ -73,6 +73,8 @@ public final class AotvAssist {
     /** The current route was planned in the air (cutting a jump short): stale once we land. */
     private static boolean plannedInAir;
     private static boolean wasOnGround = true;
+    /** Etherwarp: times the aim was refined after the last check before firing failed. */
+    private static int fireRetries;
     private static int etherCounter;
     private static boolean forwardOwned;
     private static int teleportReach = 12;
@@ -371,6 +373,7 @@ public final class AotvAssist {
 
     private static void start(Minecraft client, LocalPlayer player, WarpPlanner.Route r) {
         plannedInAir = !player.onGround();
+        fireRetries = 0;
         baritone.behavior.LookBehavior.suspendSmoothing = true;
         route = r.hops();
         hopIndex = 0;
@@ -397,7 +400,8 @@ public final class AotvAssist {
             // Keep going while turning: Baritone is paused and let go of all keys, which
             // braked every jump mid-air ("something holds him back"). Not for etherwarp:
             // sneaking, and the target block is fixed anyway.
-            holdForward(client, !ether);
+            // in the air only: on the ground walking on while turning just moved us off the plan
+            holdForward(client, !ether && !player.onGround());
         }
         switch (step) {
             case PREPARE -> {
@@ -411,7 +415,8 @@ public final class AotvAssist {
                     setSneak(client, ether);
                 }
                 // the server needs a moment to see the new slot and the sneaking
-                if (stepTicks >= (ether ? 3 : 1)) {
+                // etherwarp: the server needs the sneaking for sure before the warp
+                if (stepTicks >= (ether ? 4 : 1)) {
                     next(hop.jumpFirst() && player.onGround() ? Step.JUMP : Step.AIM);
                 }
             }
@@ -437,8 +442,11 @@ public final class AotvAssist {
                 // where the server thinks we look
                 float error = Math.max(aimError(player, hop), serverAimError(baritone, player, hop));
                 boolean inAir = !player.onGround();
-                alignedTicks = error < (inAir ? 3.0f : 1.5f) ? alignedTicks + 1 : 0;
-                boolean ready = alignedTicks >= (inAir ? 1 : 2);
+                // etherwarp has to hit one block exactly: steadier and more precise
+                float tolerance = ether ? 1.0f : inAir ? 3.0f : 1.5f;
+                int steady = ether ? 3 : inAir ? 1 : 2;
+                alignedTicks = error < tolerance ? alignedTicks + 1 : 0;
+                boolean ready = alignedTicks >= steady;
                 if (hop.jumpFirst()) {
                     // teleport from the top of the jump; with strong Jump Boost already at
                     // 3.5 blocks (the planner assumes at most 4)
@@ -457,12 +465,19 @@ public final class AotvAssist {
             case USE -> {
                 aimExact(player, hop);
                 if (!stillLands(client, baritone, player, hop)) {
+                    if (ether && fireRetries < 2) {
+                        // not quite on the block yet: aim again instead of giving the warp up
+                        fireRetries++;
+                        next(Step.AIM);
+                        return;
+                    }
                     // from where we are now this warp would not land where it should (fell
                     // further, walked on): better not fire than come out somewhere wrong
                     System.out.println("[Pathfinder] Warp verworfen: wuerde nicht mehr am Ziel landen");
                     cancelQuietly(client, player, baritone);
                     return;
                 }
+                fireRetries = 0;
                 holdForward(client, false);
                 startPos = player.position();
                 client.gameMode.useItem(player, InteractionHand.MAIN_HAND);
@@ -528,6 +543,20 @@ public final class AotvAssist {
             return EtherwarpHelper.raycast(client.level, eye, dir, EtherwarpHelper.MAX_RANGE)
                     .map(hit -> hit.pos().equals(target)).orElse(false);
         }
+        if (!teleportLands(client, eye, dir, hop)) {
+            return false;
+        }
+        if (!player.onGround()) {
+            // In the air the server still has us about a tick behind: a third of the in-air
+            // teleports came back "There are blocks in the way!" although the check from the
+            // current position passed. Fire only when the position a tick ago works too.
+            Vec3 previousEye = new Vec3(player.xo, player.yo + player.getEyeHeight(), player.zo);
+            return teleportLands(client, previousEye, dir, hop);
+        }
+        return true;
+    }
+
+    private static boolean teleportLands(Minecraft client, Vec3 eye, Vec3 dir, WarpPlanner.Hop hop) {
         Vec3 landed = WarpPlanner.simulateTeleport(client.level, eye, dir, teleportReach);
         if (landed == null) {
             return false; // "There are blocks in the way!"

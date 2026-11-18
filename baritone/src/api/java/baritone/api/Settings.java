@@ -818,6 +818,13 @@ public final class Settings {
     public final Setting<Float> moveYawSmoothing = new Setting<>(0f);
 
     /**
+     * Air Client: on flat stretches walk straight to the farthest path point that can be reached
+     * in a straight line (string pulling) instead of from block centre to block centre - a
+     * diagonal-ish way is no zig-zag of straight and diagonal steps any more.
+     */
+    public final Setting<Boolean> pathSmoothing = new Setting<>(false);
+
+    /**
      * When true, the player will remain with its existing look direction as often as possible.
      * Although, in some cases this can get it stuck, hence this setting to disable that behavior.
      */

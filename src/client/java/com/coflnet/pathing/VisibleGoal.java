@@ -107,21 +107,37 @@ public final class VisibleGoal implements Goal, IGoalRenderPos {
      * collision box block it; any of the target's centre, head or feet being visible is enough.
      */
     public static boolean seesAny(Level level, Vec3 eye, Entity target) {
+        return visibleAim(level, eye, target) != null;
+    }
+
+    /**
+     * A point of the target's hitbox a hit from {@code eye} reaches without any block with a
+     * collision box (leaves, slabs, glass ...) in between: centre, head, feet, then the sides
+     * facing us. Null when none is free.
+     */
+    public static Vec3 visibleAim(Level level, Vec3 eye, Entity target) {
         var box = target.getBoundingBox();
         Vec3 center = box.getCenter();
+        double inset = 0.1;
         Vec3[] aims = {
                 center,
                 new Vec3(center.x, box.maxY - 0.15, center.z),
-                new Vec3(center.x, box.minY + 0.25, center.z)
+                new Vec3(center.x, box.minY + 0.25, center.z),
+                new Vec3(Math.clamp(eye.x, box.minX + inset, box.maxX - inset), center.y,
+                        Math.clamp(eye.z, box.minZ + inset, box.maxZ - inset)),
+                new Vec3(box.minX + inset, box.maxY - 0.15, box.minZ + inset),
+                new Vec3(box.maxX - inset, box.maxY - 0.15, box.maxZ - inset),
+                new Vec3(box.minX + inset, box.maxY - 0.15, box.maxZ - inset),
+                new Vec3(box.maxX - inset, box.maxY - 0.15, box.minZ + inset)
         };
         for (Vec3 aim : aims) {
             BlockHitResult hit = level.clip(new ClipContext(eye, aim, ClipContext.Block.COLLIDER,
                     ClipContext.Fluid.NONE, target));
             if (hit.getType() == HitResult.Type.MISS) {
-                return true;
+                return aim;
             }
         }
-        return false;
+        return null;
     }
 
     static boolean standable(Level level, BlockPos feet) {
