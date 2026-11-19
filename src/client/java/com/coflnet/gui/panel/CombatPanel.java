@@ -34,15 +34,15 @@ public final class CombatPanel extends FlipperPanel {
         String mode = PlayerSettings.combatOneHit ? "One-hit" : PlayerSettings.followAttack ? "Fight" : "Follow";
         int stateColor = switch (status.state()) {
             case "Fighting" -> GlassStyle.STATUS;
-            case "Walking", "Following" -> 0xFFE8D27A;
+            case "Walking", "Following", "Going to last known position" -> 0xFFE8D27A;
             default -> GlassStyle.MUTED;
         };
         if (status.target().isEmpty()) {
             rows.add(new Row("", status.state(), "Targets: " + String.join(", ", FollowFeature.targets()),
                     mode, "", stateColor, 0));
         } else {
-            rows.add(new Row("", status.target(), status.state() + " · " + Math.round(status.distance()) + "m",
-                    mode, "", stateColor, 0));
+            String detail = status.distance() < 0 ? status.state() : status.state() + " · " + Math.round(status.distance()) + "m";
+            rows.add(new Row("", status.target(), detail, mode, "", stateColor, 0));
         }
         for (String next : status.next()) {
             if (rows.size() >= rowLimit()) {
