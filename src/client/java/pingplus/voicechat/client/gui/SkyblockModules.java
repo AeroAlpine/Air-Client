@@ -304,24 +304,24 @@ final class SkyblockModules {
     private static Module combat() {
         var pf = com.coflnet.pathing.PathfinderConfig.get();
         return new Module("combat", "Combat",
-                "Walks to the chosen mobs with the pathfinder, fights them and moves on to the next.",
+                "Fights selected mobs or follows a player by Minecraft username.",
                 Section.SKILLS, () -> new ItemStack(Items.DIAMOND_SWORD),
                 () -> PlayerSettings.combatEnabled, FollowFeature::toggle, b -> b
                 .group("Combat macro")
                 .key("Toggle key", "Starts and stops Combat. Click, then press a key (Esc clears it).",
                         FollowFeature::toggleKey)
-                .mobPicker("Targets", "Mobs to fight. Pick them from the list (search by name or area) or type any "
-                                + "mob, player or entity type and press Enter. A name also matches longer names.",
+                .mobPicker("Targets", "Pick a mob or type a Minecraft username, mob name or entity type and press Enter. "
+                                + "Player following uses the exact username.",
                         SkyblockModules::mobOptions, FollowFeature::targets,
                         FollowFeature::addTarget, FollowFeature::removeTarget, PlayerSettings::save,
                         "Search mobs or type a name")
-                .toggle("Attack targets", "Hits the target. Off: only walks after it.",
+                .toggle("Attack targets", "Hits the target. Turn off this and One-hit mode to follow a player without attacking.",
                         () -> PlayerSettings.followAttack, () -> PlayerSettings.followAttack = !PlayerSettings.followAttack)
                 .toggle("One-hit mode", "One click per mob, then straight to the next (already chosen) target "
                                 + "without waiting for the kill. Good for weak mobs.",
                         () -> PlayerSettings.combatOneHit, () -> PlayerSettings.combatOneHit = !PlayerSettings.combatOneHit)
                 .group("Movement")
-                .slider("Follow distance", "How close it walks to the target before attacking.", 1, 16, 1, "blocks",
+                .slider("Follow distance", "How much space to keep when following a player, or how close to approach when attacking.", 1, 16, 1, "blocks",
                         () -> PlayerSettings.followDistance, v -> PlayerSettings.followDistance = (int) Math.round(v))
                 .slider("Rotation speed", "How fast the camera turns towards the target.", 30, 1080, 10, "°/s",
                         () -> PlayerSettings.combatRotationSpeed, v -> PlayerSettings.combatRotationSpeed = (float) v)

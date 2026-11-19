@@ -284,7 +284,8 @@ public final class AotvAssist {
         }
         Goal goal = baritone.getPathingBehavior().getGoal();
         boolean botWalking = goal != null && baritone.getPathingControlManager().mostRecentInControl()
-                .filter(process -> process != PAUSE && process != baritone.getFollowProcess()).isPresent();
+                .filter(process -> process != PAUSE && process != baritone.getFollowProcess()
+                        && !(process instanceof PlayerFollowProcess)).isPresent();
         long now = System.currentTimeMillis();
         if (!botWalking || baritone.getPathingBehavior().hasPath()) {
             noPathSince = 0;
