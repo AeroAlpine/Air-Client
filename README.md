@@ -110,7 +110,7 @@ All keys can be changed in the Minecraft controls menu. While a bot is running, 
 ## FAQ
 
 **Which Minecraft version does Air Client support?**
-Minecraft 26.2 with Fabric Loader 0.19.5 or newer and Java 25.
+Minecraft 26.2 with Fabric Loader 0.19.5 or newer and Java 25. future version support incoming
 
 **Is Air Client free?**
 Yes. It is open source under the AGPL-3.0 license.
