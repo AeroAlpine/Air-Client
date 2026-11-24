@@ -75,9 +75,17 @@ public final class AotvAssist {
     private static boolean wasOnGround = true;
     /** Etherwarp: times the aim was refined after the last check before firing failed. */
     private static int fireRetries;
+    private static int useAttempts;
     private static int etherCounter;
     private static boolean forwardOwned;
     private static int teleportReach = 12;
+    private static long lastSlowPlanLogAt;
+    private static double lastPlanMs;
+    private static double planMsAverage;
+    private static int slowPlanPenalty;
+    private static long planStatsAt;
+    private static String lastWarpPlanLog = "";
+    private static long lastWarpPlanLogAt;
     /** Ticks an in-air teleport needs to turn and fire; the plan starts from there. */
     private static final int AIR_AIM_TICKS = 3;
     private static WalkSearch walkCache;
@@ -122,6 +130,7 @@ public final class AotvAssist {
     private static volatile double teleportCostScale = 1.0;
     private static volatile boolean forceBoth;
     private static volatile boolean suppressed;
+    private static volatile boolean etherwarpAllowed = true;
 
     private AotvAssist() {
     }
@@ -141,6 +150,40 @@ public final class AotvAssist {
         teleportCostScale = 1.0;
         forceBoth = false;
         suppressed = false;
+        etherwarpAllowed = true;
+    }
+
+    /** Mining setting: off = no etherwarp planning (teleports stay available). */
+    public static void setEtherwarpAllowed(boolean on) {
+        etherwarpAllowed = on;
+    }
+
+    public static boolean etherwarpAllowed() {
+        return etherwarpAllowed && com.coflnet.pathing.sim.SimClock.millis() >= etherwarpPausedUntil;
+    }
+
+    /**
+     * An etherwarp that did not fire (the ray no longer hits its block) pauses all etherwarps for a
+     * while: Baritone planned the same warp again and again from the Forge start and the bot never
+     * walked off (Mines log: 3x "Warp verworfen", then OSCILLATION at MovementWarp, then the
+     * Commission Bot gave up).
+     */
+    private static volatile long etherwarpPausedUntil;
+
+    private static void pauseEtherwarps(String why) {
+        etherwarpPausedUntil = com.coflnet.pathing.sim.SimClock.millis() + 30_000L;
+        // Baritone re-plans on its own on the way (not through the walk's settings): switch the
+        // moves off right here, the walk switches them on again when the pause is over
+        try {
+            baritone.api.BaritoneAPI.getSettings().allowEtherwarpMoves.value = false;
+        } catch (RuntimeException ignored) {
+        }
+        System.out.println("[Pathfinder] etherwarps paused for 30 s (" + why + ") - walking instead");
+    }
+
+    /** The eye the server uses for an etherwarp: the player sneaks for it. */
+    private static Vec3 etherEye(LocalPlayer player) {
+        return player.position().add(0, WarpPlanner.SNEAK_EYE, 0);
     }
 
     /** No automatic warps while set (Combat for the Commission Bot walks only). */
@@ -231,6 +274,16 @@ public final class AotvAssist {
         return teleportBlocks(player.getInventory().getItem(slot), PathfinderConfig.get().aotvTeleportBlocks);
     }
 
+    /** Hotbar slot of the AOTV (etherwarp: an item that can etherwarp), -1 without one. */
+    public static int warpItemSlot(LocalPlayer player, boolean etherwarp) {
+        return hotbarSlot(player, etherwarp);
+    }
+
+    /** Another bot clicked an AOTV itself (recorded routes): the fail-safe knows the teleport is ours. */
+    public static void markOwnWarp() {
+        lastWarpAt = com.coflnet.pathing.sim.SimClock.millis();
+    }
+
     /** True when the hotbar holds an item that can etherwarp. */
     public static boolean canEtherwarp(LocalPlayer player) {
         return hotbarSlot(player, true) >= 0;
@@ -286,7 +339,7 @@ public final class AotvAssist {
         boolean botWalking = goal != null && baritone.getPathingControlManager().mostRecentInControl()
                 .filter(process -> process != PAUSE && process != baritone.getFollowProcess()
                         && !(process instanceof PlayerFollowProcess)).isPresent();
-        long now = System.currentTimeMillis();
+        long now = com.coflnet.pathing.sim.SimClock.millis();
         if (!botWalking || baritone.getPathingBehavior().hasPath()) {
             noPathSince = 0;
         } else if (noPathSince == 0) {
@@ -307,15 +360,47 @@ public final class AotvAssist {
         // the more of the (Jump Boost) flight it saves.
         boolean takeOff = inAir && wasOnGround && player.getDeltaMovement().y > 0.2;
         wasOnGround = player.onGround();
-        int every = inAir ? 2 : 4;
+        // If the warp check itself gets expensive (walk search, many raycasts), check less often:
+        // the repeated planning on the client thread was the stutter right before a teleport.
+        // (combat chases replan all the time: there every warp check costs a frame)
+        boolean combat = pingplus.voicechat.client.FollowFeature.isBorrowed()
+                || pingplus.voicechat.client.PlayerSettings.combatEnabled;
+        int every = (inAir ? 2 : combat ? 8 : 4) + slowPlanPenalty;
         if ((!takeOff && ++evaluateCounter % every != 0) || (!player.onGround() && !inAir)
                 || player.isInWater() || player.isInLava()) {
             return;
         }
         // the teleport check is cheap: every 4 ticks on the ground; the etherwarp search only
         // every third time
-        boolean withEther = player.onGround() && ++etherCounter % 3 == 0;
+        boolean withEther = player.onGround() && ++etherCounter % 3 == 0 && !combat
+                && etherwarpAllowed();
+        long planAt = com.coflnet.pathing.sim.SimClock.nanos();
         Optional<WarpPlanner.Route> found = plan(client, player, baritone, goal, mode, false, withEther);
+        lastPlanMs = (com.coflnet.pathing.sim.SimClock.nanos() - planAt) / 1_000_000.0;
+        planMsAverage = planMsAverage <= 0 ? lastPlanMs : planMsAverage * 0.9 + lastPlanMs * 0.1;
+        if (lastPlanMs >= 20.0) {
+            // 20-78 ms on the render thread = 1-5 missing frames: the camera "lag". Pause the
+            // automatic warp checks for a moment instead of only checking a little less often.
+            cooldownUntil = now + 2_500L;
+        }
+        if (lastPlanMs >= 10.0) {
+            slowPlanPenalty = Math.min(16, slowPlanPenalty + (lastPlanMs >= 20.0 ? 3 : 1));
+            if (now - lastSlowPlanLogAt > 1_500L) {
+                lastSlowPlanLogAt = now;
+                System.out.println(String.format(Locale.ROOT,
+                        "[Pathfinder] warp plan slow: %.1f ms (client thread, %s%s), throttle +%d ticks",
+                        lastPlanMs, inAir ? "in air" : "on ground", withEther ? ", etherwarp search" : "",
+                        slowPlanPenalty));
+            }
+        } else if (lastPlanMs < 4.0) {
+            slowPlanPenalty = Math.max(0, slowPlanPenalty - 1);
+        }
+        if (now - planStatsAt > 10_000L && planMsAverage > 3.0) {
+            planStatsAt = now;
+            System.out.println(String.format(Locale.ROOT,
+                    "[Pathfinder] warp planning avg %.1f ms, throttle +%d ticks (cached walk search)",
+                    planMsAverage, slowPlanPenalty));
+        }
         found.ifPresent(r -> start(client, player, r));
     }
 
@@ -360,7 +445,7 @@ public final class AotvAssist {
         // Reuse the walking search (its block reads and answers) while the goal stays put:
         // a landing spot that can not reach the goal costs the full search every time.
         List<BlockPos> centers = WarpPlanner.goalCenters(goal);
-        long nowMs = System.currentTimeMillis();
+        long nowMs = com.coflnet.pathing.sim.SimClock.millis();
         if (walkCache == null || !centers.equals(walkCacheCenters) || nowMs - walkCacheAt > 3_000L
                 || walkCacheLevel != client.level) {
             walkCache = WarpPlanner.newWalk(c);
@@ -384,7 +469,7 @@ public final class AotvAssist {
                 c.path = path.positions();
             }
             c.walkVanillaTicks = WarpPlanner.walkTicks(c, player.blockPosition());
-        } else if (forcedNoPath || noPathSince > 0 && System.currentTimeMillis() - noPathSince > NO_PATH_STUCK_MS) {
+        } else if (forcedNoPath || noPathSince > 0 && com.coflnet.pathing.sim.SimClock.millis() - noPathSince > NO_PATH_STUCK_MS) {
             // Baritone finds no way (a ledge, a hole in a wall): walking is not an option
             c.walkVanillaTicks = WarpPlanner.walkTicks(c, player.blockPosition()) * 2.0 + 200.0;
         } else {
@@ -401,7 +486,7 @@ public final class AotvAssist {
 
         WarpPlanner.Route best = null;
         int etherSlot = hotbarSlot(player, true);
-        if (withEther && etherwarpOn(mode) && etherSlot >= 0 && c.onGround) {
+        if (withEther && etherwarpAllowed && etherwarpOn(mode) && etherSlot >= 0 && c.onGround) {
             best = better(best, WarpPlanner.etherwarp(c), minSaving, 0.15 * gainScale);
         }
         int teleSlot = hotbarSlot(player, false);
@@ -413,14 +498,21 @@ public final class AotvAssist {
         }
         if (best != null) {
             WarpPlanner.Hop first = best.hops().get(0);
-            System.out.println("[Pathfinder] Warp-Plan: " + best.hops().size() + "x "
+            String text = "[Pathfinder] Warp-Plan: " + best.hops().size() + "x "
                     + first.kind() + (first.jumpFirst() ? " (nach Sprung)" : "")
                     + (c.onGround ? "" : " (in der Luft)") + String.format(Locale.ROOT,
                     " %.0f statt %.0f Ticks, von %.1f %.1f %.1f nach %.1f %.1f %.1f",
                     best.ticks(), best.walkTicks(), c.feet.x, c.feet.y, c.feet.z,
                     best.hops().get(best.hops().size() - 1).landing().x,
                     best.hops().get(best.hops().size() - 1).landing().y,
-                    best.hops().get(best.hops().size() - 1).landing().z));
+                    best.hops().get(best.hops().size() - 1).landing().z);
+            long planNow = com.coflnet.pathing.sim.SimClock.millis();
+            // The same route is re-found every few ticks while walking: one line is enough.
+            if (!text.equals(lastWarpPlanLog) || planNow - lastWarpPlanLogAt > 2_000L) {
+                lastWarpPlanLog = text;
+                lastWarpPlanLogAt = planNow;
+                System.out.println(text);
+            }
         }
         return Optional.ofNullable(best);
     }
@@ -491,6 +583,7 @@ public final class AotvAssist {
     private static void start(Minecraft client, LocalPlayer player, WarpPlanner.Route r) {
         plannedInAir = !player.onGround();
         fireRetries = 0;
+        useAttempts = 0;
         baritone.behavior.LookBehavior.suspendSmoothing = true;
         route = r.hops();
         hopIndex = 0;
@@ -523,6 +616,7 @@ public final class AotvAssist {
         switch (step) {
             case PREPARE -> {
                 if (stepTicks == 1) {
+                    useAttempts = 0;
                     slot = hotbarSlot(player, ether);
                     if (slot < 0) {
                         finish(client, player, baritone, false);
@@ -532,8 +626,10 @@ public final class AotvAssist {
                     setSneak(client, ether);
                 }
                 // the server needs a moment to see the new slot and the sneaking
-                // etherwarp: the server needs the sneaking for sure before the warp
-                if (stepTicks >= (ether ? 4 : 1)) {
+                // etherwarp: the server needs the sneaking for sure before the warp.
+                // A teleport also gets 2 ticks: one tick was sometimes too fast and the
+                // first right-click was lost (the slot packet had not arrived yet).
+                if (stepTicks >= (ether ? 4 : 2)) {
                     next(hop.jumpFirst() && player.onGround() ? Step.JUMP : Step.AIM);
                 }
             }
@@ -560,8 +656,8 @@ public final class AotvAssist {
                 float error = Math.max(aimError(player, hop), serverAimError(baritone, player, hop));
                 boolean inAir = !player.onGround();
                 // etherwarp has to hit one block exactly: steadier and more precise
-                float tolerance = ether ? 1.0f : inAir ? 3.0f : 1.5f;
-                int steady = ether ? 3 : inAir ? 1 : 2;
+                float tolerance = ether ? 0.2f : inAir ? 3.0f : 1.5f;
+                int steady = ether ? 4 : inAir ? 1 : 2;
                 alignedTicks = error < tolerance ? alignedTicks + 1 : 0;
                 boolean ready = alignedTicks >= steady;
                 if (hop.jumpFirst()) {
@@ -580,7 +676,16 @@ public final class AotvAssist {
                 }
             }
             case USE -> {
-                aimExact(player, hop);
+                // Never set the rotation instantly: if the smooth aim is not there yet, go back
+                // to the AIM step (same human turn-rate limit) instead of snapping the camera.
+                float error = Math.max(aimError(player, hop), serverAimError(baritone, player, hop));
+                float tolerance = ether ? 0.2f : 3.0f;
+                if (error > tolerance) {
+                    System.out.println(String.format(Locale.ROOT,
+                            "[Pathfinder] warp aim not ready (%.1f deg) - turning instead of snapping", error));
+                    next(Step.AIM);
+                    return;
+                }
                 if (!stillLands(client, baritone, player, hop)) {
                     if (ether && fireRetries < 2) {
                         // not quite on the block yet: aim again instead of giving the warp up
@@ -591,25 +696,61 @@ public final class AotvAssist {
                     // from where we are now this warp would not land where it should (fell
                     // further, walked on): better not fire than come out somewhere wrong
                     System.out.println("[Pathfinder] Warp verworfen: wuerde nicht mehr am Ziel landen");
+                    if (ether) pauseEtherwarps("etherwarp would miss its block");
                     cancelQuietly(client, player, baritone);
                     return;
                 }
                 fireRetries = 0;
                 holdForward(client, false);
+                // Make sure the AOTV is still in the selected hand; a server slot change may
+                // have swapped it between PREPARE and here.
+                int currentSlot = hotbarSlot(player, ether);
+                if (currentSlot < 0) {
+                    System.out.println("[Pathfinder] AOTV/Etherwarp item missing before use");
+                    cancelQuietly(client, player, baritone);
+                    return;
+                }
+                if (currentSlot != player.getInventory().getSelectedSlot()) {
+                    player.getInventory().setSelectedSlot(currentSlot);
+                    return; // one tick for the server to see the slot
+                }
+                if (player.isUsingItem()) {
+                    return; // still using another item: do not spam a second right-click
+                }
+                if (player.getCooldowns().isOnCooldown(player.getMainHandItem())) {
+                    System.out.println("[Pathfinder] warp item on cooldown - skipping");
+                    cancelQuietly(client, player, baritone);
+                    return;
+                }
                 startPos = player.position();
-                client.gameMode.useItem(player, InteractionHand.MAIN_HAND);
-                lastWarpAt = System.currentTimeMillis();
+                useAttempts++;
+                net.minecraft.world.InteractionResult result = client.gameMode.useItem(player, InteractionHand.MAIN_HAND);
+                lastWarpAt = com.coflnet.pathing.sim.SimClock.millis();
+                if (result == net.minecraft.world.InteractionResult.FAIL) {
+                    System.out.println("[Pathfinder] right-click was rejected - retrying");
+                    next(Step.AIM);
+                    return;
+                }
                 next(Step.WAIT);
             }
             case WAIT -> {
                 double moved = startPos == null ? 0 : player.position().distanceTo(startPos);
                 boolean arrived = player.position().distanceTo(hop.landing()) < 2.5;
+                // The click packet sometimes gets lost (lag / anticheat). One clean retry with
+                // the same aim instead of abandoning the warp.
+                if (moved <= 0.05 && stepTicks >= 8 && useAttempts < 2) {
+                    System.out.println("[Pathfinder] right-click did not register - retrying ("
+                            + useAttempts + "/2)");
+                    next(Step.AIM);
+                    return;
+                }
                 if (moved > 2.0 && (arrived || stepTicks >= 3) || stepTicks >= 12) {
                     boolean success = moved > 2.0;
                     if (!success) {
                         finish(client, player, baritone, false);
                         return;
                     }
+                    useAttempts = 0;
                     warps++;
                     hopIndex++;
                     if (hop() != null) {
@@ -657,6 +798,7 @@ public final class AotvAssist {
         Vec3 dir = Vec3.directionFromRotation(server.getPitch(), server.getYaw());
         Vec3 eye = player.getEyePosition();
         if (hop.kind() == WarpPlanner.Kind.ETHERWARP) {
+            eye = etherEye(player); // the server checks from the sneaking eye
             BlockPos target = BlockPos.containing(hop.landing()).below();
             return EtherwarpHelper.raycast(client.level, eye, dir, EtherwarpHelper.MAX_RANGE)
                     .map(hit -> hit.pos().equals(target)).orElse(false);
@@ -675,7 +817,10 @@ public final class AotvAssist {
     }
 
     private static boolean teleportLands(Minecraft client, Vec3 eye, Vec3 dir, WarpPlanner.Hop hop) {
-        Vec3 landed = WarpPlanner.simulateTeleport(client.level, eye, dir, teleportReach);
+        // the reach of the item in the hand - the same the warp was planned with (the stored
+        // default of 12 threw away every teleport planned with another reach)
+        int reach = client.player == null ? teleportReach : teleportReach(client.player);
+        Vec3 landed = WarpPlanner.simulateTeleport(client.level, eye, dir, reach > 0 ? reach : teleportReach);
         if (landed == null) {
             return false; // "There are blocks in the way!"
         }
@@ -730,6 +875,15 @@ public final class AotvAssist {
             float pitch = (float) Math.toDegrees(-Math.atan2(d.y, flat));
             return new float[]{yaw, Math.clamp(pitch, -90.0f, 90.0f)};
         }
+        if (hop.kind() == WarpPlanner.Kind.ETHERWARP) {
+            // from the sneaking eye: aimed from the standing eye the ray from 1.27 went past the
+            // block top and the last check threw the warp away
+            Vec3 look = hop.aim().subtract(etherEye(player));
+            double flat = Math.sqrt(look.x * look.x + look.z * look.z);
+            float yaw = (float) (Math.toDegrees(Math.atan2(look.z, look.x)) - 90.0);
+            float pitch = (float) Math.toDegrees(-Math.atan2(look.y, flat));
+            return new float[]{yaw, Math.clamp(pitch, -90.0f, 90.0f)};
+        }
         return rotationTo(player, hop.aim());
     }
 
@@ -741,18 +895,23 @@ public final class AotvAssist {
         return new float[]{yaw, Math.clamp(pitch, -90.0f, 90.0f)};
     }
 
-    /**
-     * Turn speed for a warp (degrees per second). Faster than walking: the recorder showed the
-     * old speed tilting the view only ~50 degrees per second at the end of the easing, so a
-     * teleport during a jump fired just before landing.
-     */
+    /** Per-warp turn speed from the Pathfinder settings, capped at the human ceiling. */
+    private static float turnSpeed(WarpPlanner.Kind kind) {
+        PathfinderConfig config = PathfinderConfig.get();
+        double configured = kind == WarpPlanner.Kind.ETHERWARP
+                ? config.etherwarpRotationSpeed : config.teleportRotationSpeed;
+        return (float) Math.clamp(Math.min(configured, TurnProfile.HUMAN_MAX_DEG_PER_SEC),
+                120.0, TurnProfile.HUMAN_MAX_DEG_PER_SEC);
+    }
+
+    /** Planning cost: use the slower of both warp types. */
     private static float turnSpeed() {
-        return (float) PathfinderConfig.get().warpRotationSpeed;
+        return Math.min(turnSpeed(WarpPlanner.Kind.TELEPORT), turnSpeed(WarpPlanner.Kind.ETHERWARP));
     }
 
     /** Every frame while preparing / aiming: turn the camera smoothly towards the warp direction. */
     public static void frame(Minecraft client) {
-        long now = System.nanoTime();
+        long now = com.coflnet.pathing.sim.SimClock.nanos();
         double dt = lastFrameNanos == 0 ? 0 : Math.min(0.05, (now - lastFrameNanos) / 1e9);
         lastFrameNanos = now;
         LocalPlayer player = client.player;
@@ -762,20 +921,18 @@ public final class AotvAssist {
             return;
         }
         float[] wanted = aimRotation(player, hop);
-        // a calm, eased turn to the warp direction (it locked on almost instantly before)
-        float speed = Math.min(turnSpeed(), 460f);
-        float yaw = pingplus.voicechat.client.AimSmoothing.step(player.getYRot(), wanted[0], speed, dt, 7.0);
-        float pitch = pingplus.voicechat.client.AimSmoothing.step(player.getXRot(), wanted[1], speed * 0.8f, dt, 7.0);
+        // a calm, eased turn to the warp direction (never a snap)
+        float speed = turnSpeed(hop.kind());
+        float yaw = pingplus.voicechat.client.AimSmoothing.step(player.getYRot(), wanted[0], speed, dt, 10.0);
+        float pitch = pingplus.voicechat.client.AimSmoothing.step(player.getXRot(), wanted[1], speed * 0.8f, dt, 10.0);
+        // never move the view more than 15 deg in one rendered frame (no visible snap at low FPS)
+        float dy = net.minecraft.util.Mth.wrapDegrees(yaw - player.getYRot());
+        float dp = pitch - player.getXRot();
+        if (Math.abs(dy) > 15f) yaw = player.getYRot() + Math.signum(dy) * 15f;
+        if (Math.abs(dp) > 15f) pitch = player.getXRot() + Math.signum(dp) * 15f;
         player.setYRot(yaw);
         player.setXRot(pitch);
         player.setYHeadRot(yaw);
-    }
-
-    private static void aimExact(LocalPlayer player, WarpPlanner.Hop hop) {
-        float[] wanted = aimRotation(player, hop);
-        player.setYRot(wanted[0]);
-        player.setXRot(wanted[1]);
-        player.setYHeadRot(wanted[0]);
     }
 
     private static void next(Step nextStep) {
@@ -790,17 +947,13 @@ public final class AotvAssist {
         route = List.of();
         hopIndex = 0;
         chain = 0;
-        long now = System.currentTimeMillis();
+        long now = com.coflnet.pathing.sim.SimClock.millis();
         if (success) {
             cooldownUntil = now + 800L;
         } else {
             // no teleport: no mana, wrong item, blocked - do not spam it
             cooldownUntil = now + 6_000L;
             System.out.println("[Pathfinder] AOTV ohne Wirkung - Pause 6s");
-        }
-        try {
-            baritone.getPathingBehavior().forceCancel(); // plan again from the new position
-        } catch (RuntimeException ignored) {
         }
     }
 
@@ -810,11 +963,7 @@ public final class AotvAssist {
         route = List.of();
         hopIndex = 0;
         chain = 0;
-        cooldownUntil = System.currentTimeMillis() + 300L;
-        try {
-            baritone.getPathingBehavior().forceCancel();
-        } catch (RuntimeException ignored) {
-        }
+        cooldownUntil = com.coflnet.pathing.sim.SimClock.millis() + 300L;
     }
 
     private static void setSneak(Minecraft client, boolean sneak) {

@@ -59,21 +59,21 @@ public final class FollowFeature {
     private static boolean pressingForward;
     private static boolean pressingSprint;
     /** The wanted camera direction after its glide (see frame()). */
+    /** The look follows the path (walking): the only time the view may wobble a little. */
+    private static boolean walkingLook;
     private static float glideYaw;
     private static float glidePitch;
     private static boolean glideValid;
-    /** The look follows the path (walking): the only time the view may wobble a little. */
-    private static boolean walkingLook;
+    private static float lastCameraYaw;
+    private static float lastCameraPitch;
     private static final double wobblePhaseA = ThreadLocalRandom.current().nextDouble(0, Math.PI * 2);
     private static final double wobblePhaseB = ThreadLocalRandom.current().nextDouble(0, Math.PI * 2);
-    private static long nextGlanceAt = System.currentTimeMillis() + 5_000L;
+    private static long nextGlanceAt = com.coflnet.pathing.sim.SimClock.millis() + 5_000L;
     private static long glanceFrom;
     private static long glanceUntil;
     private static float glanceYaw;
     /** Camera as this feature left it last frame: anything else moving it shows up as a difference. */
-    private static float lastCameraYaw;
-    private static float lastCameraPitch;
-    private static final int HIDDEN_SWITCH_TICKS = 10;
+    private static final int HIDDEN_SWITCH_TICKS = 4;
     /** Ticks between searches while no target is around. */
     private static final int SEARCH_RETRY_TICKS = 4;
     /** Ticks between "is another mob clearly closer?" checks. */
@@ -126,7 +126,7 @@ public final class FollowFeature {
         borrowed = List.copyOf(targets);
         followed = null;
         done = 0;
-        startedAt = System.currentTimeMillis();
+        startedAt = com.coflnet.pathing.sim.SimClock.millis();
     }
 
     public static void giveBack() {
@@ -151,9 +151,18 @@ public final class FollowFeature {
     private static int walkRadius = 2;
     private static boolean walkWarps;
     /** The one path engine for walking (plan once, follow the tightened line, warps included). */
-    private static final com.coflnet.pathing.PathEngine WALK = new com.coflnet.pathing.PathEngine();
-    /** Combat's own engine: to a far mob and to the kill zone (no warps). */
-    private static final com.coflnet.pathing.PathEngine CHASE = new com.coflnet.pathing.PathEngine();
+    private static final com.coflnet.pathing.BaritoneWalk WALK =
+            new com.coflnet.pathing.BaritoneWalk();
+    /**
+     * 0.3.9: walking for other bots (Commission Bot, miner) uses the 0.3.7 path engine again;
+     * combat (chase, kill zone) keeps the new Baritone walk. The simulation tests the new one.
+     */
+    private static final com.coflnet.pathing.LegacyPathEngine LEGACY_WALK =
+            new com.coflnet.pathing.LegacyPathEngine();
+    private static final boolean LEGACY = System.getenv("AIRCLIENT_ASTAR_TEST") == null;
+    /** Combat's own A* engine: to a far mob and to the kill zone (no warps). */
+    private static final com.coflnet.pathing.BaritoneWalk CHASE =
+            new com.coflnet.pathing.BaritoneWalk();
     private static Entity chaseTarget;
     private static volatile com.coflnet.pathing.PathEngine.Result walkResult = com.coflnet.pathing.PathEngine.Result.IDLE;
 
@@ -165,14 +174,19 @@ public final class FollowFeature {
     /** Walks to {@code goal}; {@code warps} lets the plan use teleports and etherwarps. */
     public static void walkTo(net.minecraft.core.BlockPos goal, int radius, boolean warps) {
         if (goal == null) return;
-        if (walkGoal == null || !walkGoal.equals(goal)) walkResult = com.coflnet.pathing.PathEngine.Result.PLANNING;
+        int r = Math.max(0, radius);
+        if (walkGoal == null || !walkGoal.equals(goal) || walkRadius != r || walkWarps != warps) {
+            walkResult = com.coflnet.pathing.PathEngine.Result.PLANNING;
+            if (!LEGACY) WALK.start(goal, r, warps);
+        }
         walkGoal = goal;
-        walkRadius = Math.max(0, radius);
+        walkRadius = r;
         walkWarps = warps;
     }
 
     public static void stopWalking() {
         WALK.stop();
+        LEGACY_WALK.stop();
         if (walkGoal == null) {
             return;
         }
@@ -199,19 +213,28 @@ public final class FollowFeature {
     }
 
     public static String walkStatus() {
-        return WALK.status();
+        return LEGACY ? LEGACY_WALK.status() : WALK.status();
     }
 
     private static void walkTick(Minecraft client, LocalPlayer player) {
-        IBaritone baritone = primary();
-        if (baritone != null && baritone.getCustomGoalProcess().isActive()) {
-            // Baritone only plans now - it never walks a path itself
-            baritone.getCustomGoalProcess().onLostControl();
-            baritone.getPathingBehavior().cancelEverything();
-        }
         net.minecraft.core.BlockPos goal = walkGoal;
         if (goal == null) return;
-        WALK.goTo(goal, Math.max(1, walkRadius), walkWarps);
+        if (LEGACY) {
+            // 0.3.7: Baritone only plans, the old engine walks the path itself
+            IBaritone baritone = primary();
+            if (baritone != null && baritone.getCustomGoalProcess().isActive()) {
+                baritone.getCustomGoalProcess().onLostControl();
+                baritone.getPathingBehavior().cancelEverything();
+            }
+            LEGACY_WALK.goTo(goal, Math.max(1, walkRadius), walkWarps);
+            walkResult = com.coflnet.pathing.PathEngine.Result.valueOf(LEGACY_WALK.tick(client).name());
+            active = true;
+            idleLooking = false;
+            KillAuraFeature.setForcedTarget(null);
+            legacyLook(player);
+            return;
+        }
+        if (!WALK.same(goal, walkRadius, walkWarps)) WALK.start(goal, walkRadius, walkWarps);
         walkResult = WALK.tick(client);
         active = true;
         idleLooking = false;
@@ -223,9 +246,48 @@ public final class FollowFeature {
     private static boolean engineLook(LocalPlayer player, com.coflnet.pathing.PathEngine engine) {
         net.minecraft.world.phys.Vec3 look = engine.lookPoint();
         if (look == null) {
-            if (engine == WALK) {
-                hasLook = false; // e.g. while warping: no turn back to an old look afterwards
-            }
+            smoothLook = null;
+            return false;
+        }
+        smoothLook = look;
+        setLook(player, look);
+        walkingLook = true;
+        return true;
+    }
+
+    /** Camera for the 0.3.7 engine (as in 0.3.7). */
+    private static boolean legacyLook(LocalPlayer player) {
+        net.minecraft.world.phys.Vec3 look = LEGACY_WALK.lookPoint();
+        if (look == null) {
+            hasLook = false; // e.g. while warping: no turn back to an old look afterwards
+            smoothLook = null;
+            return false;
+        }
+        smoothLook = look;
+        setLook(player, look);
+        walkingLook = true;
+        return true;
+    }
+
+    /** Camera for the Baritone walker; movement input is not touched here. */
+    private static boolean engineLook(LocalPlayer player, com.coflnet.pathing.BaritoneWalk engine) {
+        net.minecraft.world.phys.Vec3 look = engine.lookPoint();
+        if (look == null) {
+            hasLook = false; // during a warp the AOTV aim owns the camera
+            smoothLook = null;
+            return false;
+        }
+        smoothLook = look;
+        setLook(player, look);
+        walkingLook = true;
+        return true;
+    }
+
+    /** Camera for the new A* walker; movement input is not touched here. */
+    private static boolean engineLook(LocalPlayer player, com.coflnet.pathing.astar.AStarWalk engine) {
+        net.minecraft.world.phys.Vec3 look = engine.lookPoint();
+        if (look == null) {
+            hasLook = false; // during a warp the AOTV aim owns the camera
             smoothLook = null;
             return false;
         }
@@ -293,7 +355,7 @@ public final class FollowFeature {
         Minecraft client = Minecraft.getInstance();
         LocalPlayer player = client.player;
         boolean on = PlayerSettings.combatEnabled;
-        long running = on && startedAt > 0 ? System.currentTimeMillis() - startedAt : 0;
+        long running = on && startedAt > 0 ? com.coflnet.pathing.sim.SimClock.millis() - startedAt : 0;
         if (!on || player == null) {
             return new Status(false, "Off", "", 0, List.of(), done, running);
         }
@@ -334,7 +396,7 @@ public final class FollowFeature {
         PlayerSettings.save();
         if (PlayerSettings.combatEnabled) {
             done = 0;
-            startedAt = System.currentTimeMillis();
+            startedAt = com.coflnet.pathing.sim.SimClock.millis();
         }
         Minecraft client = Minecraft.getInstance();
         if (client.player != null) {
@@ -366,7 +428,7 @@ public final class FollowFeature {
             release();
             return;
         }
-        long nowMs = System.currentTimeMillis();
+        long nowMs = com.coflnet.pathing.sim.SimClock.millis();
         if (!attackOn() && followPlayer(client, player, names, nowMs)) return;
         stopPlayerFollow();
 
@@ -417,7 +479,7 @@ public final class FollowFeature {
                 searchCooldown = SEARCH_RETRY_TICKS;
                 if (lost != null) {
                     lastLostPos = lost.position();
-                    lastLostAt = System.currentTimeMillis();
+                    lastLostAt = com.coflnet.pathing.sim.SimClock.millis();
                 }
                 // nothing in sight: head for where the kills were densest (after a moment of
                 // looking around, like a player who just finished a mob)
@@ -429,14 +491,14 @@ public final class FollowFeature {
             stopRoam(primary());
             searchCooldown = 0;
             idleLooking = false;
-            lastSwitchAt = System.currentTimeMillis();
+            lastSwitchAt = com.coflnet.pathing.sim.SimClock.millis();
             switchCheckCooldown = SWITCH_CHECK_TICKS;
             queueCooldown = 0;
         } else if (!(followed instanceof Player) && --switchCheckCooldown <= 0) {
             // mobs: move on to another one that is clearly closer (with hysteresis)
             switchCheckCooldown = SWITCH_CHECK_TICKS;
             Entity closer = findTarget(client, player, names);
-            long now = System.currentTimeMillis();
+            long now = com.coflnet.pathing.sim.SimClock.millis();
             if (closer != null && closer != followed && TargetSwitch.shouldSwitch(
                     effectiveDistance(player, followed), effectiveDistance(player, closer), now - lastSwitchAt)) {
                 followed = closer;
@@ -492,6 +554,7 @@ public final class FollowFeature {
         if (attack != null && com.coflnet.pathing.DirectChase.possible(client.level, player, current, directChase)) {
             if (!directChase) {
                 directChase = true;
+                CHASE.stop();
                 if (issued != null) {
                     follow.cancel();
                 }
@@ -508,39 +571,30 @@ public final class FollowFeature {
         if (directChase) {
             endDirectChase(client);
         }
-        if (player.distanceTo(current) > 9.0 && !seekingSpot) {
-            // far away: one planned path to it (only the end is re-planned when it runs off)
-            if (issued != null) {
-                follow.cancel();
-                issued = null;
-            }
-            if (chaseTarget != current) {
-                CHASE.stop(); // another target: drop the old path right away
-                chaseTarget = current;
-            }
-            CHASE.goTo(current.blockPosition(), 3, false);
-            CHASE.tick(client);
-            active = true;
-            KillAuraFeature.setForcedTarget(attack == null ? null : entity -> entity == attack,
-                    PlayerSettings.followCpsMin, PlayerSettings.followCpsMax);
-            if (!engineLook(player, CHASE)) {
-                updateLook(client, player, baritone, current, attack != null);
-            }
-            return;
+        // Near or far: one planned path to the mob, followed by the path engine (the line,
+        // jumps with the right take-off, no vines). Baritone only plans - its own walker
+        // (with its jumpy executor and its lines through every jump) is not used any more.
+        if (issued != null) {
+            follow.cancel();
+            issued = null;
         }
-        if (CHASE.busy()) {
-            CHASE.stop();
+        if (chaseTarget != current) {
+            CHASE.stop(); // another target: drop the old path right away
+            chaseTarget = current;
         }
-        chaseTarget = null;
-        if (issued != current || !follow.isActive()) {
-            follow.follow(entity -> entity == current);
-            issued = current;
-        }
+        // far mobs: an etherwarp may skip a chain of jumps (never teleports near the mob)
+        CHASE.allowShortcuts(player.distanceTo(current) > 12);
+        CHASE.allowTeleports(player.distanceTo(current) > 16); // straight stretches, never close to the mob
+        // always close the remaining distance to 2 blocks, also when a wall is between us
+        CHASE.goTo(current.blockPosition(), 2, false);
+        CHASE.tick(client);
         active = true;
-
-        KillAuraFeature.setForcedTarget(attack == null ? null : entity -> entity == attack,
+        // a jump / drop needs the camera: KillAura waits until we are on the ground again
+        KillAuraFeature.setForcedTarget(attack == null || CHASE.cameraCritical() ? null : entity -> entity == attack,
                 PlayerSettings.followCpsMin, PlayerSettings.followCpsMax);
-        updateLook(client, player, baritone, current, attack != null);
+        if (!engineLook(player, CHASE)) {
+            updateLook(client, player, baritone, current, attack != null);
+        }
     }
 
     private static boolean followPlayer(Minecraft client, LocalPlayer player, List<String> names, long now) {
@@ -597,7 +651,10 @@ public final class FollowFeature {
         }
         // one-hit mode: on to the next mob quickly, zack zack
         long turnToNewTarget = oneHit() ? 250 : 450;
-        if (target != null && System.currentTimeMillis() - lastSwitchAt < turnToNewTarget) {
+        // only to a mob we can see: behind a wall the turn aimed through it, and with many mobs the
+        // camera flipped down to each new one and back up to the path ("up, down, zack zack")
+        if (target != null && com.coflnet.pathing.sim.SimClock.millis() - lastSwitchAt < turnToNewTarget
+                && player.hasLineOfSight(target) && player.distanceTo(target) < 12.0) {
             // Just picked a new target: turn towards it while the new path is planned, like a
             // player who spots the next mob, instead of following the old path's direction.
             smoothLook = null;
@@ -612,8 +669,9 @@ public final class FollowFeature {
             // block of it (that was the left-right-left twitching on diagonal paths).
             smoothLook = smoothLook == null ? ahead : smoothLook.lerp(ahead, com.coflnet.pathing.MovementStyle.lookBlend());
             net.minecraft.world.phys.Vec3 look = smoothLook;
-            if (target != null && player.hasLineOfSight(target)) {
+            if (target != null && player.hasLineOfSight(target) && player.distanceTo(target) < 10.0) {
                 // a player keeps an eye on the mob he walks to: a fifth of the way towards it
+                // (only close: far away it pulled against the path and the camera shook)
                 net.minecraft.world.phys.Vec3 at = new net.minecraft.world.phys.Vec3(target.getX(),
                         target instanceof LivingEntity living ? living.getEyeY() : target.getY(), target.getZ());
                 look = look.lerp(at, 0.2);
@@ -629,6 +687,12 @@ public final class FollowFeature {
             return;
         }
         if (!attacking && PlayerSettings.followLookAtNearbyPlayers && lookAtNearbyPlayer(client, player, target)) {
+            return;
+        }
+        if (!player.hasLineOfSight(target) || player.distanceTo(target) > 10.0) {
+            // no path yet (planning) and the mob far away or behind blocks: turn the way it is,
+            // level - not stop and stare at it (and down at a wolf 40 blocks away)
+            setLook(player, new net.minecraft.world.phys.Vec3(target.getX(), player.getEyeY(), target.getZ()));
             return;
         }
         setLook(player, new net.minecraft.world.phys.Vec3(target.getX(),
@@ -689,39 +753,46 @@ public final class FollowFeature {
 
     /** Every rendered frame: ease the camera towards the wanted look. */
     public static void frame(Minecraft client) {
-        long now = System.nanoTime();
+        long now = com.coflnet.pathing.sim.SimClock.nanos();
         double dt = lastFrameNanos == 0 ? 0 : Math.min(0.1, (now - lastFrameNanos) / 1e9);
         lastFrameNanos = now;
         LocalPlayer player = client.player;
         if ((!active && !idleLooking) || !hasLook || player == null || client.gui.screen() != null) {
-            glideValid = false; // start the next glide from where the camera really is
+            glideValid = false;
             return;
         }
-        float speed = (float) (Math.clamp(PlayerSettings.combatRotationSpeed, 30.0f, 1080.0f)
-                * com.coflnet.pathing.MovementStyle.turnSpeedFactor());
+        // Path following uses the Pathfinder turn limit; looking at a target uses the Combat
+        // "turn to enemy" setting. AimSmoothing still keeps every turn continuous.
+        float speed = walkingLook
+                ? (float) (com.coflnet.pathing.TurnProfile.cameraLimitDegPerTick() * 20.0)
+                : (float) Math.min(com.coflnet.pathing.TurnProfile.HUMAN_MAX_DEG_PER_SEC,
+                        Math.clamp(PlayerSettings.combatRotationSpeed, 30.0f, 1080.0f));
+        // setting up an etherwarp / teleport: its own Pathfinder slider decides
+        boolean warpAim = WALK.aimingWarp() || CHASE.aimingWarp();
+        if (warpAim) {
+            double warpSpeed = WALK.aimingWarp() ? WALK.warpAimSpeedDegPerSecond()
+                    : CHASE.warpAimSpeedDegPerSecond();
+            speed = (float) Math.min(warpSpeed, com.coflnet.pathing.TurnProfile.HUMAN_MAX_DEG_PER_SEC);
+        }
         double rate = com.coflnet.pathing.MovementStyle.easeRate();
-        // Two smooth stages instead of the old dead zone (wait until 5 degrees off, then turn
-        // fast, then stop - that start/stop was the jerky camera): the wanted direction itself
-        // glides (~0.25 s), and the camera eases continuously after it.
+        boolean quick = oneHit() && com.coflnet.pathing.sim.SimClock.millis() - lastSwitchAt < 600;
+        float[] wobble = wobble(quick);
+        float wantYaw = lookYaw + wobble[0];
+        float wantPitch = Math.clamp(lookPitch + wobble[1], -60.0f, 60.0f);
+        if (quick) {
+            speed = Math.min((float) com.coflnet.pathing.TurnProfile.HUMAN_MAX_DEG_PER_SEC, speed * 1.6f);
+        }
         boolean movedByOthers = glideValid
                 && (Math.abs(net.minecraft.util.Mth.wrapDegrees(player.getYRot() - lastCameraYaw)) > 2.0f
                 || Math.abs(player.getXRot() - lastCameraPitch) > 2.0f);
         if (!glideValid || movedByOthers) {
-            // first frame, or a warp / KillAura turned the camera: glide on from there
-            glideYaw = player.getYRot();
+            glideYaw = player.getYRot(); // first frame, or a warp turned the camera: from there
             glidePitch = player.getXRot();
             glideValid = true;
         }
-        boolean quick = oneHit() && System.currentTimeMillis() - lastSwitchAt < 600;
-        double glide = 1.0 - Math.exp(-dt / (quick ? 0.1 : 0.25));
-        float[] wobble = wobble(quick);
-        float wantYaw = lookYaw + wobble[0];
-        float wantPitch = Math.clamp(lookPitch + wobble[1], -60.0f, 60.0f);
+        double glide = 1.0 - Math.exp(-dt / (quick || warpAim ? 0.06 : 0.12));
         glideYaw += (float) (net.minecraft.util.Mth.wrapDegrees(wantYaw - glideYaw) * glide);
         glidePitch += (float) ((wantPitch - glidePitch) * glide);
-        if (quick) {
-            speed *= 1.6f;
-        }
         float yawDelta = Math.abs(net.minecraft.util.Mth.wrapDegrees(glideYaw - player.getYRot()));
         float pitchDelta = Math.abs(glidePitch - player.getXRot());
         if (Math.max(yawDelta, pitchDelta) >= 0.15f) { // below: close enough, no micro jitter
@@ -739,14 +810,14 @@ public final class FollowFeature {
      * parts, right after a target switch and while fighting.
      */
     private static float[] wobble(boolean quick) {
-        long nowMs = System.currentTimeMillis();
+        long nowMs = com.coflnet.pathing.sim.SimClock.millis();
         double amount = com.coflnet.pathing.MovementStyle.lookAround();
         if (!walkingLook || quick || amount <= 0.0 || com.coflnet.pathing.PathDifficulty.isHard()
                 || com.coflnet.pathing.AotvAssist.isBusy()) {
             glanceUntil = 0;
             return new float[]{0, 0};
         }
-        double t = System.nanoTime() / 1e9;
+        double t = com.coflnet.pathing.sim.SimClock.nanos() / 1e9;
         float yaw = (float) (amount * (2.6 * Math.sin(t * 0.83 + wobblePhaseA) + 1.3 * Math.sin(t * 2.1 + wobblePhaseB)));
         float pitch = (float) (amount * 1.5 * Math.sin(t * 0.61 + wobblePhaseB));
         if (glanceUntil == 0 && nowMs >= nextGlanceAt) {
@@ -805,7 +876,10 @@ public final class FollowFeature {
                     || hitOnce(target)) {
                 continue;
             }
-            double distance = player.distanceToSqr(target);
+            // a wolf behind blocks counts as farther away: the bot went for those and hit the wall
+            double d = com.coflnet.pathing.TargetSwitch.effectiveDistance(
+                    Math.sqrt(player.distanceToSqr(target)), player.hasLineOfSight(target));
+            double distance = d * d;
             if (distance < bestDistance) {
                 bestDistance = distance;
                 best = target;
@@ -858,7 +932,10 @@ public final class FollowFeature {
         s.antiCheatCompatibility.value = true;
         s.followRadius.value = hidden ? 1 : Math.clamp(PlayerSettings.followDistance, 1, 16);
         s.followOffsetDistance.value = 0.0;
-        // The camera is steered here (walking direction) or by KillAura, never by Baritone.
+        // Baritone does not walk any more (only plans): the server must get the real camera
+        // direction. With free look it got Baritone's old silent rotation - and every warp
+        // check against that failed ("etherwarp tried 3-4 times").
+        // Baritone walks; the server gets its smoothed rotation, the camera is ours.
         s.freeLook.value = true;
         com.coflnet.pathing.PathfinderTuning.apply(s, false);
     }
@@ -897,7 +974,7 @@ public final class FollowFeature {
         double dx = target.getX() - player.getX();
         double dz = target.getZ() - player.getZ();
         double reach = Math.min(Math.clamp(PlayerSettings.followDistance, 1, 16), PlayerSettings.killAuraRange);
-        double stopAt = Math.max(1.5, reach - 0.5);
+        double stopAt = Math.max(1.5, Math.min(2.0, reach - 0.5));
         float yawTo = (float) (Math.toDegrees(Math.atan2(dz, dx)) - 90.0);
         float off = Math.abs(net.minecraft.util.Mth.wrapDegrees(yawTo - player.getYRot()));
         double distance = Math.sqrt(dx * dx + dz * dz);
@@ -967,7 +1044,7 @@ public final class FollowFeature {
      */
     private static void idle(Minecraft client, LocalPlayer player) {
         stopBaritone();
-        long now = System.currentTimeMillis();
+        long now = com.coflnet.pathing.sim.SimClock.millis();
         if (lastLostPos == null || now - lastLostAt > IDLE_LOOK_MS || client.gui.screen() != null) {
             idleLooking = false;
             hasLook = false;
@@ -991,7 +1068,7 @@ public final class FollowFeature {
     }
 
     private static boolean hitOnce(Entity entity) {
-        long now = System.currentTimeMillis();
+        long now = com.coflnet.pathing.sim.SimClock.millis();
         Long until = HIT_ONCE.get(entity.getUUID());
         if (until != null && until > now) {
             return true;
@@ -1026,7 +1103,7 @@ public final class FollowFeature {
             if (directChase) {
                 endDirectChase(client);
             }
-            baritone.getCustomGoalProcess().setGoalAndPath(goal);
+            CHASE.goTo(((com.coflnet.pathing.VisibleGoal) goal).getGoalPos(), 1, false);
             seekingSpot = true;
             seekFor = current;
             seekGoalAt = nowMs;
@@ -1035,10 +1112,13 @@ public final class FollowFeature {
             giveUp(baritone, current, "Platz mit freier Schlaglinie nicht erreicht");
             return true;
         }
+        CHASE.tick(client);
         active = true;
-        KillAuraFeature.setForcedTarget(entity -> entity == attack,
+        KillAuraFeature.setForcedTarget(CHASE.cameraCritical() ? null : entity -> entity == attack,
                 PlayerSettings.followCpsMin, PlayerSettings.followCpsMax);
-        updateLook(client, player, baritone, current, true);
+        if (!engineLook(player, CHASE)) {
+            updateLook(client, player, baritone, current, true);
+        }
         return true;
     }
 
@@ -1056,8 +1136,7 @@ public final class FollowFeature {
         }
         boolean reached = roamTarget != null
                 && Math.hypot(player.getX() - roamTarget.x, player.getZ() - roamTarget.z) < 3.0;
-        if (roamTarget == null || reached || nowMs - roamSince > ROAM_REPICK_MS
-                || !baritone.getCustomGoalProcess().isActive()) {
+        if (roamTarget == null || reached || nowMs - roamSince > ROAM_REPICK_MS || !CHASE.busy()) {
             net.minecraft.world.phys.Vec3 pick = com.coflnet.pathing.KillMap.pick(player.position(), 8.0,
                     () -> ThreadLocalRandom.current().nextDouble());
             if (pick == null) {
@@ -1105,7 +1184,7 @@ public final class FollowFeature {
     }
 
     private static void giveUp(IBaritone baritone, Entity target, String why) {
-        UNREACHABLE.put(target.getUUID(), System.currentTimeMillis() + UNREACHABLE_MS);
+        UNREACHABLE.put(target.getUUID(), com.coflnet.pathing.sim.SimClock.millis() + UNREACHABLE_MS);
         System.out.println("[Combat] Ziel aufgegeben (" + why + "): " + name(target));
         stopSeeking(baritone);
         if (followed == target) {
@@ -1115,6 +1194,9 @@ public final class FollowFeature {
     }
 
     private static void stopSeeking(IBaritone baritone) {
+        if (seekingSpot) {
+            CHASE.stop();
+        }
         if (seekingSpot && baritone != null) {
             baritone.getCustomGoalProcess().onLostControl();
         }
@@ -1182,6 +1264,7 @@ public final class FollowFeature {
         PLAYER_FOLLOW.reset();
         CHASE.stop();
         WALK.releaseKeys(Minecraft.getInstance());
+        LEGACY_WALK.releaseKeys(Minecraft.getInstance());
         queue.clear();
         EntityObstacles.setQueue(null);
         stopBaritone();

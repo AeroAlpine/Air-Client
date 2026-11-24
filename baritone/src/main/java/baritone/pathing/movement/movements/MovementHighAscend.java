@@ -17,6 +17,8 @@
 
 package baritone.pathing.movement.movements;
 
+import baritone.Baritone;
+
 import baritone.api.IBaritone;
 import baritone.api.pathing.movement.MovementStatus;
 import baritone.api.utils.BetterBlockPos;
@@ -66,9 +68,6 @@ public class MovementHighAscend extends Movement {
         res.z = z + direction.getStepZ();
         res.cost = COST_INF;
         int max = context.maxHighJump;
-        if (max < 2) {
-            return;
-        }
         if (!context.allowJumpAtBuildLimit && y >= context.world.getMaxY()) {
             return;
         }
@@ -76,7 +75,13 @@ public class MovementHighAscend extends Movement {
             return; // need solid ground to jump from
         }
         if (MovementHelper.isBottomSlab(context.get(x, y - 1, z))) {
-            return; // jump from a bottom slab is half a block lower
+            // a jump from a bottom slab starts half a block lower: one block less reach. With
+            // SkyBlock's 6-block jump that is still 4 up (level 10/11: from the slab onto the
+            // log pillar) - it used to be refused altogether.
+            max = Math.min(max, (int) Math.floor(Baritone.settings().jumpHeight.value - 0.2D - 0.5D));
+        }
+        if (max < 2) {
+            return;
         }
         int destX = res.x;
         int destZ = res.z;
@@ -149,19 +154,38 @@ public class MovementHighAscend extends Movement {
         MovementHelper.moveTowards(ctx, state, dest);
         state.setInput(Input.SPRINT, false);
 
+        double px = ctx.player().position().x;
+        double pz = ctx.player().position().z;
         if (!ctx.player().onGround() || ctx.playerFeet().y > src.y) {
-            return state; // already in the air, keep pushing toward the ledge
+            // Air Client: in the air only push onto the ledge once we are above it (or at the top
+            // of the jump). Pushing at once moved the head under the ledge's edge and the jump
+            // ended there (level 11: "high ascend without gain" again and again under a roof).
+            boolean aboveLedge = ctx.player().position().y >= dest.getY() - 0.1;
+            boolean atTop = ctx.player().getDeltaMovement().y < 0.05;
+            if (!aboveLedge && !atTop) {
+                state.setInput(Input.MOVE_FORWARD, false);
+            }
+            return state;
         }
 
         int xAxis = Math.abs(direction.getStepX());
         int zAxis = Math.abs(direction.getStepZ());
-        double px = ctx.player().position().x;
-        double pz = ctx.player().position().z;
-        double flatDistToNext = xAxis * Math.abs((dest.getX() + 0.5D) - px) + zAxis * Math.abs((dest.getZ() + 0.5D) - pz);
+        // Air Client: jump only with the whole body in the take-off column, next to the ledge -
+        // not under it. At SkyBlock speed the run-up overshot into the next column (under the roof
+        // of level 11) and the jump hit the ceiling. Line up sneaking (slow), then jump.
+        double alongOff = xAxis * Math.abs((src.getX() + 0.5D) - px) + zAxis * Math.abs((src.getZ() + 0.5D) - pz);
         double sideDist = zAxis * Math.abs((dest.getX() + 0.5D) - px) + xAxis * Math.abs((dest.getZ() + 0.5D) - pz);
-        if (flatDistToNext > 1.2D || sideDist > 0.25D) {
-            return state; // line up at the wall first, otherwise we jump past/next to the ledge
+        net.minecraft.world.phys.Vec3 v = ctx.player().getDeltaMovement();
+        if (alongOff > 0.2D || sideDist > 0.2D || Math.hypot(v.x, v.z) > 0.12D) {
+            MovementHelper.moveTowards(ctx, state, src);
+            state.setInput(Input.SNEAK, true);
+            state.setInput(Input.SPRINT, false);
+            if (alongOff <= 0.2D && sideDist <= 0.2D) {
+                state.setInput(Input.MOVE_FORWARD, false); // in place: only let the speed die down
+            }
+            return state;
         }
+        state.setInput(Input.MOVE_FORWARD, false);
         return state.setInput(Input.JUMP, true);
     }
 

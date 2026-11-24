@@ -106,7 +106,7 @@ public final class LineFollower {
             baritone.getPathingControlManager().registerProcess(PAUSE);
             registeredOn = baritone;
         }
-        long now = System.currentTimeMillis();
+        long now = com.coflnet.pathing.sim.SimClock.millis();
         if (!active) {
             if (now < retryAfter || !player.onGround() || !start(mc, baritone, player)) return null;
         }
@@ -311,6 +311,17 @@ public final class LineFollower {
             }
         }
         return true;
+    }
+
+    /** Feet can stand at this exact point (floor within a step, no block at feet/head). */
+    static boolean standable(Level level, Vec3 p) {
+        double g = ground(level, p.x, p.y, p.z);
+        return !Double.isNaN(g) && Math.abs(g - p.y) <= 0.65 && headRoom(level, p.x, g, p.z);
+    }
+
+    /** The floor height at a sample of the smoothed line (NaN when there is none). */
+    static double floorAt(Level level, Vec3 p) {
+        return ground(level, p.x, p.y + 0.45, p.z);
     }
 
     static double groundTop(Level level, BetterBlockPos p) {

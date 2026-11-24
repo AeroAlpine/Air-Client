@@ -20,8 +20,48 @@ public final class PathfinderLogicTest {
         setbackGuard();
         targetSwitch();
         nametagHealth();
+        turnProfile();
+        com.coflnet.pathing.astar.AStarPathfinderTest.main(new String[0]);
         System.out.println("PASS: jump physics, fault decay/penalty, stuck detection, failed jumps,"
-                + " setback position, fault confirmation, lag, setback guard, target switch, nametag health");
+                + " setback position, fault confirmation, lag, setback guard, target switch,"
+                + " nametag health, turn profile");
+    }
+
+    /** The pre-computed turn check: a normal corner is walkable, a hairpin keeps the bot off sprint. */
+    private static void turnProfile() {
+        check(TurnProfile.HUMAN_MAX_DEG_PER_TICK == 60.0, "configured turn ceiling is 60 deg/tick");
+        java.util.List<net.minecraft.world.phys.Vec3> corner = java.util.List.of(
+                new net.minecraft.world.phys.Vec3(0, 64, 0),
+                new net.minecraft.world.phys.Vec3(2, 64, 0),
+                new net.minecraft.world.phys.Vec3(2, 64, 2));
+        TurnProfile normal = TurnProfile.build(corner, new boolean[]{true, true, true}, 12.0);
+        TurnProfile.Corner at = normal.cornerAt(1);
+        check(at != null, "90 deg corner is in the profile");
+        check(Math.abs(at.turnDegrees() - 90.0) < 0.5, "corner angle is 90 deg, got " + at.turnDegrees());
+        check(normal.lookahead(1, TurnProfile.WALK_SPEED, 3.2) >= 3.2, "walk look-ahead at least the base");
+        check(normal.sprintAllowed(1, 20), "90 deg corner can still be sprinted");
+
+        java.util.List<net.minecraft.world.phys.Vec3> hairpin = java.util.List.of(
+                new net.minecraft.world.phys.Vec3(0, 64, 0),
+                new net.minecraft.world.phys.Vec3(2, 64, 0),
+                new net.minecraft.world.phys.Vec3(0.1, 64, 0.1));
+        TurnProfile sharp = TurnProfile.build(hairpin, new boolean[]{true, true, true}, 12.0);
+        check(sharp.cornerAt(1) != null && sharp.cornerAt(1).turnDegrees() > 150,
+                "hairpin angle is detected");
+        check(!sharp.sprintAllowed(1, 20), "hairpin is not sprinted");
+        check(sharp.lookahead(1, TurnProfile.SPRINT_SPEED, 3.2) > 3.2,
+                "hairpin gets a longer pre-turn look-ahead");
+
+        // Minecraft 26.2 travelInAir constants and the terminal speed from the custom attribute
+        check(Math.abs(MinecraftPhysics.GROUND_DRAG - 0.546) < 1e-9,
+                "ground drag is 0.6 * 0.91, got " + MinecraftPhysics.GROUND_DRAG);
+        net.minecraft.world.phys.Vec3 forward = MinecraftPhysics.forward(0f);
+        check(Math.abs(forward.z - 1.0) < 1e-9 && Math.abs(forward.x) < 1e-9,
+                "yaw 0 faces +Z, got " + forward);
+        double walk = TurnProfile.walkSpeed();
+        double sprint = TurnProfile.sprintSpeed();
+        check(walk > 0.20 && walk < 0.24, "vanilla terminal walk speed ~0.22, got " + walk);
+        check(sprint > walk && sprint < 0.31, "sprint adds 30 %, got " + sprint);
     }
 
     private static void jumpPhysics() {

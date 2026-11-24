@@ -57,8 +57,12 @@ public final class PathfinderConfig {
     public double teleportCostTicks = 3.0;
     /** Most etherwarps planned in a row. */
     public int etherwarpMaxChain = 20;
-    /** How fast the camera turns for a teleport or an etherwarp (degrees per second). */
+    /** Old shared value; kept so old configs migrate cleanly. */
     public double warpRotationSpeed = 650.0;
+    /** How fast the camera turns while lining up an etherwarp (degrees per second). */
+    public double etherwarpRotationSpeed = 650.0;
+    /** How fast the camera turns while lining up a teleport (degrees per second). */
+    public double teleportRotationSpeed = 650.0;
 
     /** Static NPCs / mobs that block the way count as obstacles. */
     public boolean avoidStandingEntities = true;
@@ -76,12 +80,12 @@ public final class PathfinderConfig {
     public boolean lineFollow = true;
     /** How much the camera looks around while walking (drift, side glances, idle glances), 0-100 %; 0 = never. */
     public double lookAround = 40.0;
-    /** Most degrees the walking direction / server rotation may turn per tick (0 = unlimited). */
-    public double maxTurnPerTick = 40.0;
+    /** Most degrees the camera / server rotation may turn per tick (10-60, never instant). */
+    public double maxTurnPerTick = 60.0;
 
     /** Bumped when defaults change; older files (no field = 0) get the new defaults once. */
     public int configVersion;
-    static final int CURRENT_VERSION = 4;
+    static final int CURRENT_VERSION = 6;
 
     private static final Gson GSON = new GsonBuilder().setPrettyPrinting().create();
     private static volatile PathfinderConfig instance;
@@ -162,6 +166,21 @@ public final class PathfinderConfig {
             configVersion = 4;
             save();
         }
+        if (configVersion < 5) {
+            // rotation is now one fast, configurable limit (old 95 deg/tick snaps are gone)
+            if (maxTurnPerTick < 10.0 || maxTurnPerTick > 60.0) {
+                maxTurnPerTick = 60.0;
+            }
+            configVersion = 5;
+            save();
+        }
+        if (configVersion < 6) {
+            // separate etherwarp / teleport turn speeds; old config has one shared value
+            etherwarpRotationSpeed = warpRotationSpeed > 0 ? warpRotationSpeed : 650.0;
+            teleportRotationSpeed = warpRotationSpeed > 0 ? warpRotationSpeed : 650.0;
+            configVersion = 6;
+            save();
+        }
     }
 
     void clamp() {
@@ -181,7 +200,12 @@ public final class PathfinderConfig {
         etherwarpCostTicks = clamp(etherwarpCostTicks, 0.0, 200.0);
         teleportCostTicks = clamp(teleportCostTicks, 0.0, 100.0);
         etherwarpMaxChain = (int) clamp(etherwarpMaxChain, 1, 20);
-        warpRotationSpeed = clamp(warpRotationSpeed, 120.0, 1800.0);
+        // Never instant: the fastest allowed turn is 30 deg/tick (600 deg/s). Old configs with
+        // 95 deg/tick caused the SNAP entries in the path logs and the spinning on corners.
+        maxTurnPerTick = clamp(maxTurnPerTick, 2.0, TurnProfile.HUMAN_MAX_DEG_PER_TICK);
+        warpRotationSpeed = clamp(warpRotationSpeed, 120.0, TurnProfile.HUMAN_MAX_DEG_PER_SEC);
+        etherwarpRotationSpeed = clamp(etherwarpRotationSpeed, 120.0, TurnProfile.HUMAN_MAX_DEG_PER_SEC);
+        teleportRotationSpeed = clamp(teleportRotationSpeed, 120.0, TurnProfile.HUMAN_MAX_DEG_PER_SEC);
         if (aotvMode == null || aotvMode.isBlank()) {
             aotvMode = "OFF";
         }

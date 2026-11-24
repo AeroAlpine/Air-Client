@@ -323,7 +323,7 @@ final class SkyblockModules {
                 .group("Movement")
                 .slider("Follow distance", "How much space to keep when following a player, or how close to approach when attacking.", 1, 16, 1, "blocks",
                         () -> PlayerSettings.followDistance, v -> PlayerSettings.followDistance = (int) Math.round(v))
-                .slider("Rotation speed", "How fast the camera turns towards the target.", 30, 1080, 10, "°/s",
+                .slider("Turn to enemy", "How fast the camera turns to the next combat target.", 30, 1080, 10, "°/s",
                         () -> PlayerSettings.combatRotationSpeed, v -> PlayerSettings.combatRotationSpeed = (float) v)
                 .slider("Calm movement", "Higher = smoother, calmer camera while walking. Lower = snappier.",
                         0, 100, 5, "%", () -> pf.movementCalmness, v -> {
@@ -766,6 +766,14 @@ final class SkyblockModules {
                 .toggle("Mithril and Titanium", "Mithril Miner, Titanium Miner and their area versions. Needs a "
                                 + "pickaxe or drill and an AOTV (teleport down, etherwarp up) in the hotbar.",
                         () -> PlayerSettings.miningBotMining, () -> PlayerSettings.miningBotMining = !PlayerSettings.miningBotMining)
+                .group("Mining settings")
+                .toggle("Etherwarp in path", "Allow etherwarps in the mining pathfinder. Off = walk / teleport only.",
+                        () -> PlayerSettings.miningBotEtherwarp,
+                        () -> PlayerSettings.miningBotEtherwarp = !PlayerSettings.miningBotEtherwarp)
+                .slider("Block to block turn", "How fast the camera turns from one mining block to the next.", 60, 1200, 10, "°/s",
+                        () -> PlayerSettings.miningTurnSpeed, v -> PlayerSettings.miningTurnSpeed = (float) v)
+                .slider("Early next block", "Leave a block this many ms before it breaks and aim at the next one.", 0, 300, 5, "ms",
+                        () -> PlayerSettings.miningEarlySwitchMs, v -> PlayerSettings.miningEarlySwitchMs = (int) Math.round(v))
                 .group("Other")
                 .toggle("Sell full inventory", "Sells everything with /bz Sell Inventory Now when the inventory is "
                                 + "full (needs a Booster Cookie).",
@@ -912,7 +920,7 @@ final class SkyblockModules {
                 .slider("Wall distance", "How strongly it keeps away from walls.", 0, 5, .25, "",
                         () -> pf.wallSafetyCost, v -> { pf.wallSafetyCost = v; pf.save(); })
                 .group("Tuning")
-                .slider("Max turn", "Fastest camera turn per tick while walking.", 10, 180, 5, "°/t",
+                .slider("Max turn", "Fastest camera turn per tick while walking (never instant).", 10, 60, 5, "°/t",
                         () -> pf.maxTurnPerTick, v -> { pf.maxTurnPerTick = v; pf.save(); })
                 .slider("Jump penalty", "Higher = prefers walking around over jumping.", 0, 10, .5, "",
                         () -> pf.jumpPenalty, v -> { pf.jumpPenalty = v; pf.save(); })
@@ -938,8 +946,10 @@ final class SkyblockModules {
                         () -> pf.teleportCostTicks, v -> { pf.teleportCostTicks = v; pf.save(); })
                 .slider("Etherwarps in a row", "Most etherwarps planned one after another.", 1, 20, 1, "",
                         () -> pf.etherwarpMaxChain, v -> { pf.etherwarpMaxChain = (int) Math.round(v); pf.save(); })
-                .slider("Warp turn speed", "How fast the camera turns for a teleport or an etherwarp.", 120, 1800, 10, "°/s",
-                        () -> pf.warpRotationSpeed, v -> { pf.warpRotationSpeed = v; pf.save(); })
+                .slider("Etherwarp turn speed", "How fast the camera turns to line up an etherwarp.", 120, 1200, 10, "°/s",
+                        () -> pf.etherwarpRotationSpeed, v -> { pf.etherwarpRotationSpeed = v; pf.save(); })
+                .slider("Teleport turn speed", "How fast the camera turns to line up a teleport.", 120, 1200, 10, "°/s",
+                        () -> pf.teleportRotationSpeed, v -> { pf.teleportRotationSpeed = v; pf.save(); })
                 .group("Learning from faults")
                 .toggle("Learn from faults", "Remembers spots where it got stuck and avoids them next time.",
                         () -> pf.learnFromFaults, () -> { pf.learnFromFaults = !pf.learnFromFaults; pf.save(); })

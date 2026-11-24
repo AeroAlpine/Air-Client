@@ -210,6 +210,71 @@ public final class Settings {
     public final Setting<Double> jumpHeight = new Setting<>(1.25D);
 
     /**
+     * Air Client: plan sprint jumps over gaps in 16 directions, onto lower / higher blocks too
+     * (MovementLongJump; needs allowParkour). Reach from {@link #jumpHeight} and {@link #longJumpGroundSpeed}.
+     */
+    public final Setting<Boolean> allowLongJump = new Setting<>(true);
+
+    /** Air Client: sprint speed on the ground in blocks per tick (vanilla 0.28), set from the player's stats. */
+    public final Setting<Double> longJumpGroundSpeed = new Setting<>(0.28D);
+
+    /** Air Client: extra cost of a long jump on top of {@link #jumpPenalty}. */
+    public final Setting<Double> longJumpPenalty = new Setting<>(12.0D);
+
+    /** Air Client: deepest landing below the take-off of a long jump. */
+    public final Setting<Integer> longJumpMaxDrop = new Setting<>(8);
+
+    /** Air Client long jump calibration: share of the sprint speed there after the short run-up. */
+    public final Setting<Double> longJumpRunUp = new Setting<>(0.6D);
+
+    /** Air Client long jump calibration: extra horizontal speed of the jump tick (blocks/tick). */
+    public final Setting<Double> longJumpBoost = new Setting<>(0.12D);
+
+    /** Air Client long jump calibration: input acceleration in the air (0.02 walking, 0.026 sprinting). */
+    public final Setting<Double> longJumpAirAccel = new Setting<>(0.02D);
+
+    /** Air Client long jump calibration: take-off beyond the block centre + landing before it (blocks). */
+    public final Setting<Double> longJumpSlack = new Setting<>(1.2D);
+
+    /** Air Client: long jumps are planned with at most this jump height (calibrated range). */
+    public final Setting<Double> longJumpMaxHeight = new Setting<>(4.0D);
+
+    /** Air Client: long jumps are planned with at most this ground speed (blocks/tick). */
+    public final Setting<Double> longJumpMaxGroundSpeed = new Setting<>(0.6D);
+
+    /** Air Client: at most this many blocks straight up beside a wall (high ascend). */
+    public final Setting<Integer> highAscendMaxBlocks = new Setting<>(4);
+
+    /**
+     * Air Client: how a walk takes a turn bigger than the key tolerance.
+     * 0 = strafe into it while the camera turns, 1 = stop (optionally sneak) and turn first when
+     * the turn is bigger than {@link #turnStopAngle}, 2 = start turning towards the next movement
+     * {@link #preTurnDistance} blocks before the corner.
+     */
+    public final Setting<Integer> turnStyle = new Setting<>(0);
+
+    /** Air Client: turn style 1 stops for turns bigger than this (degrees). */
+    public final Setting<Float> turnStopAngle = new Setting<>(60f);
+
+    /** Air Client: turn style 1 sneaks while it stands and turns. */
+    public final Setting<Boolean> turnSneak = new Setting<>(false);
+
+    /** Air Client: turn style 2 starts turning this many blocks before the end of a movement. */
+    public final Setting<Double> preTurnDistance = new Setting<>(1.2D);
+
+    /**
+     * Air Client: how a walk goes over an edge (descend / fall, not stairs).
+     * 0 = as it comes, 1 = no sprint over the edge, 2 = brake at the edge, then step off slowly.
+     */
+    public final Setting<Integer> dropStyle = new Setting<>(0);
+
+    /**
+     * Air Client: path smoothing (string pulling) only where the path really zig-zags (straight and
+     * diagonal steps in turn along one line), not at real corners.
+     */
+    public final Setting<Boolean> smoothingZigZagOnly = new Setting<>(false);
+
+    /**
      * Air Client: extra cost (ticks) for every side of a standing position that borders a
      * drop of 2 or more blocks, so paths keep a gap to edges when there is room. 0 = off.
      */

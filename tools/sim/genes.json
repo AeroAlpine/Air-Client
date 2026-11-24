@@ -1,0 +1,213 @@
+{
+ "info": "Baritone settings the evolution may change. type: double | int | bool (int with a small range = a choice of variant, see Settings.java: turnStyle, dropStyle). Start values come from the game (sim/settings.json), clipped into [min, max].",
+ "genes": [
+  {
+   "name": "jumpPenalty",
+   "type": "double",
+   "min": 0.0,
+   "max": 15.0
+  },
+  {
+   "name": "walkOnWaterOnePenalty",
+   "type": "double",
+   "min": 0.0,
+   "max": 10.0
+  },
+  {
+   "name": "costHeuristic",
+   "type": "double",
+   "min": 2.0,
+   "max": 5.0
+  },
+  {
+   "name": "edgeSafetyCost",
+   "type": "double",
+   "min": 0.0,
+   "max": 8.0
+  },
+  {
+   "name": "wallSafetyCost",
+   "type": "double",
+   "min": 0.0,
+   "max": 8.0
+  },
+  {
+   "name": "backtrackCostFavoringCoefficient",
+   "type": "double",
+   "min": 0.1,
+   "max": 1.0
+  },
+  {
+   "name": "maxCostIncrease",
+   "type": "double",
+   "min": 2.0,
+   "max": 20.0
+  },
+  {
+   "name": "pathCutoffFactor",
+   "type": "double",
+   "min": 0.5,
+   "max": 1.0
+  },
+  {
+   "name": "pathCutoffMinimumLength",
+   "type": "int",
+   "min": 10,
+   "max": 80
+  },
+  {
+   "name": "planningTickLookahead",
+   "type": "int",
+   "min": 40,
+   "max": 300
+  },
+  {
+   "name": "costVerificationLookahead",
+   "type": "int",
+   "min": 1,
+   "max": 10
+  },
+  {
+   "name": "maxFallHeightNoWater",
+   "type": "int",
+   "min": 2,
+   "max": 8
+  },
+  {
+   "name": "longJumpPenalty",
+   "type": "double",
+   "min": 0.0,
+   "max": 15.0
+  },
+  {
+   "name": "longJumpMaxDrop",
+   "type": "int",
+   "min": 3,
+   "max": 10
+  },
+  {
+   "name": "movementTimeoutTicks",
+   "type": "int",
+   "min": 40,
+   "max": 200
+  },
+  {
+   "name": "maxYawChangePerTick",
+   "type": "double",
+   "min": 8.0,
+   "max": 60.0
+  },
+  {
+   "name": "moveYawSmoothing",
+   "type": "double",
+   "min": 0.0,
+   "max": 0.9
+  },
+  {
+   "name": "sprintAscends",
+   "type": "bool"
+  },
+  {
+   "name": "allowDiagonalDescend",
+   "type": "bool"
+  },
+  {
+   "name": "allowDiagonalAscend",
+   "type": "bool"
+  },
+  {
+   "name": "allowOvershootDiagonalDescend",
+   "type": "bool"
+  },
+  {
+   "name": "pathSmoothing",
+   "type": "bool"
+  },
+  {
+   "name": "allowWalkOnBottomSlab",
+   "type": "bool"
+  },
+  {
+   "name": "sprintInWater",
+   "type": "bool"
+  },
+  {
+   "name": "turnStyle",
+   "type": "int",
+   "min": 0,
+   "max": 2,
+   "start_unit": 0.5
+  },
+  {
+   "name": "turnStopAngle",
+   "type": "double",
+   "min": 20.0,
+   "max": 120.0
+  },
+  {
+   "name": "turnSneak",
+   "type": "bool",
+   "start_unit": 0.5
+  },
+  {
+   "name": "preTurnDistance",
+   "type": "double",
+   "min": 0.5,
+   "max": 3.0
+  },
+  {
+   "name": "dropStyle",
+   "type": "int",
+   "min": 0,
+   "max": 2,
+   "start_unit": 0.5
+  },
+  {
+   "name": "smoothingZigZagOnly",
+   "type": "bool",
+   "start_unit": 0.5
+  },
+  {
+   "name": "longJumpRunUp",
+   "type": "double",
+   "min": 0.3,
+   "max": 1.0
+  },
+  {
+   "name": "longJumpBoost",
+   "type": "double",
+   "min": 0.0,
+   "max": 0.2
+  },
+  {
+   "name": "longJumpAirAccel",
+   "type": "double",
+   "min": 0.015,
+   "max": 0.026
+  },
+  {
+   "name": "longJumpSlack",
+   "type": "double",
+   "min": 0.6,
+   "max": 1.8
+  },
+  {
+   "name": "longJumpMaxHeight",
+   "type": "double",
+   "min": 2.0,
+   "max": 7.0
+  },
+  {
+   "name": "longJumpMaxGroundSpeed",
+   "type": "double",
+   "min": 0.3,
+   "max": 1.5
+  },
+  {
+   "name": "highAscendMaxBlocks",
+   "type": "int",
+   "min": 2,
+   "max": 6
+  }
+ ]
+}

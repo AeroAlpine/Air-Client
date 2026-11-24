@@ -8,6 +8,7 @@ import net.minecraft.core.BlockPos;
 import net.minecraft.util.Mth;
 import net.minecraft.world.level.Level;
 import net.minecraft.world.level.block.state.BlockState;
+import net.minecraft.world.phys.AABB;
 import net.minecraft.world.phys.Vec3;
 import pingplus.voicechat.client.etherwarp.EtherwarpHelper;
 
@@ -62,6 +63,8 @@ public final class WarpPlanner {
     private static final double ETHER_HANDLING_TICKS = 4 + 3 + 2; // switch + sneak, steady aim, use + land
     private static final double TELEPORT_HANDLING_TICKS = 2 + 2 + 1;
     private static final double EYE = 1.62;
+    /** Eye height while sneaking (etherwarp is always fired sneaking). */
+    public static final double SNEAK_EYE = 1.27;
     private static final int TOP_K_SECOND = 6;
     private static final int TOP_K_THIRD = 3;
     private static final int GOAL_SCAN_RADIUS = 4;
@@ -205,7 +208,9 @@ public final class WarpPlanner {
         }
         List<Draft> drafts = new ArrayList<>();
         Vec3 startLook = Vec3.directionFromRotation(c.pitch, c.yaw);
-        List<Node> frontier = List.of(new Node(null, c.eye, startLook, 0, List.of()));
+        // etherwarps are fired sneaking: plan them from that eye height
+        Vec3 etherEye = c.onGround ? c.feet.add(0, SNEAK_EYE, 0) : c.eye;
+        List<Node> frontier = List.of(new Node(null, etherEye, startLook, 0, List.of()));
         int maxDepth = Math.max(1, Math.min(20, c.maxChain));
         Set<BlockPos> known = new HashSet<>(candidates);
         double bestEstimate = Double.MAX_VALUE;
@@ -240,7 +245,7 @@ public final class WarpPlanner {
                         drafts.add(new Draft(List.copyOf(hops), g, target.above(), estimate));
                         bestEstimate = Math.min(bestEstimate, estimate);
                     }
-                    next.add(new Node(target, landing.add(0, EYE, 0), dir, g, hops));
+                    next.add(new Node(target, landing.add(0, SNEAK_EYE, 0), dir, g, hops));
                 }
             }
             if (depth >= maxDepth || next.isEmpty()) {
@@ -393,7 +398,8 @@ public final class WarpPlanner {
     // ================================================================ stage 2: teleport
 
     /** Pitches tried for a teleport: up onto higher ground, level, and down onto the floor. */
-    private static final int[] TELEPORT_PITCHES = {-50, -35, -22, -12, -5, 0, 5, 10, 16, 25, 40, 60, 89};
+    // -89 / -75: straight up is the safe way out of a hole when every horizontal line is blocked
+    private static final int[] TELEPORT_PITCHES = {-89, -75, -50, -35, -22, -12, -5, 0, 5, 10, 16, 25, 40, 60, 89};
 
     public static Optional<Route> teleport(Context c) {
         if (c.goal == null || c.level == null || c.teleportReach < 4 || !prepare(c)) {
@@ -417,6 +423,9 @@ public final class WarpPlanner {
                     Vec3 landed = simulateTeleport(c.level, eye, dir, c.teleportReach);
                     if (landed == null || landed.distanceToSqr(c.feet) < 9.0) {
                         continue;
+                    }
+                    if (!teleportBubbleClear(c.level, eye, dir, c.teleportReach)) {
+                        continue; // the player body would touch a block somewhere along the line
                     }
                     Vec3 ground = fallToGround(c.level, landed);
                     if (ground == null) {
@@ -490,6 +499,26 @@ public final class WarpPlanner {
             return null;
         }
         return new Vec3(last.getX() + 0.5, last.getY() - 1.0, last.getZ() + 0.5);
+    }
+
+    /**
+     * Air Client safety bubble: the whole line of the teleport must have room for the player
+     * body plus a margin, not only the center ray. Start and destination floor are excluded.
+     * Looking horizontally into a wall, leaves or a ceiling is rejected before the click.
+     */
+    public static boolean teleportBubbleClear(Level level, Vec3 eye, Vec3 dir, double reach) {
+        Vec3 unit = dir.normalize();
+        double half = 0.45;      // 0.6 body + 0.15 margin on each side
+        double body = 1.75;      // slightly below the full 1.8 to ignore a floor at the feet
+        for (double t = 1.0; t <= reach - 0.5; t += 0.25) {
+            Vec3 feet = eye.add(unit.scale(t)).add(0, -EYE, 0);
+            AABB box = new AABB(feet.x - half, feet.y + 0.10, feet.z - half,
+                    feet.x + half, feet.y + body, feet.z + half);
+            if (level.getBlockCollisions(null, box).iterator().hasNext()) {
+                return false;
+            }
+        }
+        return true;
     }
 
     private static boolean free(Level level, BlockPos pos) {

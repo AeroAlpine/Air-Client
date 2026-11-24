@@ -69,7 +69,7 @@ public final class PathfinderSystem {
             LagMonitor.reset();
             return;
         }
-        long now = System.currentTimeMillis();
+        long now = com.coflnet.pathing.sim.SimClock.millis();
         LagMonitor.onClientTick(now);
         EntityObstacles.tick(client, now);
         if (++tickCounter % 20 == 0) {

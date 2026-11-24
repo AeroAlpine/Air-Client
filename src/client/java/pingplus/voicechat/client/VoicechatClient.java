@@ -209,6 +209,19 @@ public class VoicechatClient implements ClientModInitializer {
                 if (client.gui.screen() == null && client.player != null)
                     client.gui.setScreen(new HudEditorScreen());
             }
+            if (openGuiKey != null && "key.mouse.left".equals(openGuiKey.saveString())) {
+                // GUI on the left mouse button: every click opened it and every click in it closed
+                // it again, so it could never be bound to something else. Back to Right Shift.
+                openGuiKey.setKey(com.mojang.blaze3d.platform.InputConstants.Type.KEYSYM.getOrCreate(GLFW.GLFW_KEY_RIGHT_SHIFT));
+                KeyMapping.resetMapping();
+                client.options.save();
+                while (openGuiKey.consumeClick()) {
+                }
+                if (client.player != null) {
+                    client.player.sendSystemMessage(net.minecraft.network.chat.Component.literal(
+                            "§b[Air Client] §7The GUI cannot be on the left mouse button - it is Right Shift again."));
+                }
+            }
             while (openGuiKey != null && openGuiKey.consumeClick()) {
                 // Do not replace inventory, chat, or another mod's screen.
                 if (client.gui.screen() == null && client.player != null) {

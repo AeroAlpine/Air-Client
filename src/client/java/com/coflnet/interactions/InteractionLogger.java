@@ -310,6 +310,8 @@ public final class InteractionLogger {
         final List<double[]> path = new ArrayList<>();
         final Map<Long, Integer> map = new HashMap<>();
         final List<String> palette = new ArrayList<>();
+        /** Full block state per palette entry ("oak_stairs[facing=east,...]"), same index as palette. */
+        final List<String> states = new ArrayList<>();
         final Map<String, Integer> paletteIndex = new HashMap<>();
         final Set<Long> scannedCells = new HashSet<>();
         final Map<String, JsonObject> entities = new LinkedHashMap<>();
@@ -644,7 +646,11 @@ public final class InteractionLogger {
             BlockPos pos = entity.blockPosition();
             // Same name in the same 8-block cell = same NPC/mob group.
             String shape = name.replaceAll("[0-9.,]+[kKmM]?", "#");
-            String key = shape + "@" + (pos.getX() >> 3) + "," + (pos.getY() >> 3) + "," + (pos.getZ() >> 3);
+            // SkyBlock mobs ("[Lv11] Wolf ...") count once each, at the spot first seen: the test
+            // harness spawns them back there. Everything else: one entry per name and 8-block cell.
+            String key = name.startsWith("[Lv") && !(entity instanceof Player)
+                    ? "mob@" + entity.getUUID()
+                    : shape + "@" + (pos.getX() >> 3) + "," + (pos.getY() >> 3) + "," + (pos.getZ() >> 3);
             if (entities.containsKey(key)) return;
             JsonObject json = entityJson(entity, false);
             json.addProperty("firstSeen", seconds());
@@ -680,12 +686,13 @@ public final class InteractionLogger {
                             }
                         }
                         if (!exposed) continue;
-                        String id = blockId(state);
-                        Integer index = paletteIndex.get(id);
+                        String full = blockStateId(state);
+                        Integer index = paletteIndex.get(full);
                         if (index == null) {
                             index = palette.size();
-                            palette.add(id);
-                            paletteIndex.put(id, index);
+                            palette.add(blockId(state));
+                            states.add(full);
+                            paletteIndex.put(full, index);
                         }
                         map.put(packed, index);
                         if (map.size() >= MAX_MAP_BLOCKS) return;
@@ -757,9 +764,11 @@ public final class InteractionLogger {
             w.name("map");
             w.beginObject();
             w.name("info").value("Exposed (next to air) blocks within the scan radius of the path. "
-                    + "blocks = [x, y, z, paletteIndex]");
+                    + "blocks = [x, y, z, paletteIndex]; states[paletteIndex] = full block state");
             w.name("palette");
             GSON.toJson(stringArray(r.palette), w);
+            w.name("states");
+            GSON.toJson(stringArray(r.states), w);
             w.name("counts");
             w.beginObject();
             for (Map.Entry<String, Integer> c : paletteCounts(r).entrySet()) w.name(c.getKey()).value(c.getValue());
@@ -787,8 +796,13 @@ public final class InteractionLogger {
         for (int i = 0; i < counts.length; i++) order.add(i);
         order.sort((a, b) -> Integer.compare(counts[b], counts[a]));
         Map<String, Integer> result = new LinkedHashMap<>();
-        for (int i : order) result.put(r.palette.get(i), counts[i]);
-        return result;
+        for (int i : order) result.merge(r.palette.get(i), counts[i], Integer::sum);
+        // the same block in several states (stairs facing) shares one palette name
+        List<Map.Entry<String, Integer>> merged = new ArrayList<>(result.entrySet());
+        merged.sort((a, b) -> Integer.compare(b.getValue(), a.getValue()));
+        Map<String, Integer> sorted = new LinkedHashMap<>();
+        for (Map.Entry<String, Integer> e : merged) sorted.put(e.getKey(), e.getValue());
+        return sorted;
     }
 
     private static void writeTimeline(Recording r, String name, Path file) throws Exception {
@@ -920,6 +934,11 @@ public final class InteractionLogger {
 
     static String blockId(BlockState state) {
         return BuiltInRegistries.BLOCK.getKey(state.getBlock()).toString().replace("minecraft:", "");
+    }
+
+    /** Block with all its properties, e.g. "oak_stairs[facing=east,half=bottom,...]". */
+    static String blockStateId(BlockState state) {
+        return net.minecraft.commands.arguments.blocks.BlockStateParser.serialize(state).replace("minecraft:", "");
     }
 
     private static JsonArray posJson(BlockPos pos) {

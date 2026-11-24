@@ -68,6 +68,8 @@ public class CalculationContext {
     public final boolean allowTeleport;
     public final boolean allowEtherwarp;
     public final int teleportReach;
+    /** Air Client: long jumps for this calculation (read once, the legacy engine plans without). */
+    public final boolean allowLongJump;
     public final double teleportCost;
     public final double etherwarpCost;
     public final boolean allowParkourPlace;
@@ -119,6 +121,7 @@ public class CalculationContext {
         this.allowTeleport = Baritone.settings().allowTeleportMoves.value;
         this.allowEtherwarp = Baritone.settings().allowEtherwarpMoves.value;
         this.teleportReach = Baritone.settings().teleportMoveReach.value;
+        this.allowLongJump = Baritone.settings().allowLongJump.value;
         this.teleportCost = Baritone.settings().teleportMoveCost.value;
         this.etherwarpCost = Baritone.settings().etherwarpMoveCost.value;
         this.allowParkourPlace = Baritone.settings().allowParkourPlace.value;
@@ -167,7 +170,10 @@ public class CalculationContext {
         this.breakBlockAdditionalCost = Baritone.settings().blockBreakAdditionalPenalty.value;
         this.backtrackCostFavoringCoefficient = Baritone.settings().backtrackCostFavoringCoefficient.value;
         this.jumpPenalty = Baritone.settings().jumpPenalty.value;
-        this.maxHighJump = (int) Math.floor(Baritone.settings().jumpHeight.value - 0.2D);
+        // Air Client: at most 3 blocks straight up a wall. With SkyBlock's 6-block jump the planner
+        // sent the bot 5 blocks up beside walls it then hit (watchdog: WALL at MovementHighAscend)
+        this.maxHighJump = Math.min(Baritone.settings().highAscendMaxBlocks.value,
+                (int) Math.floor(Baritone.settings().jumpHeight.value - 0.2D));
         this.walkOnWaterOnePenalty = Baritone.settings().walkOnWaterOnePenalty.value;
         this.allowWalkOnMagmaBlocks = Baritone.settings().allowWalkOnMagmaBlocks.value;
         this.edgeSafetyCost = Math.max(0, Baritone.settings().edgeSafetyCost.value);

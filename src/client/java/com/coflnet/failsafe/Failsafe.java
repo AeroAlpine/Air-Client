@@ -94,11 +94,21 @@ public final class Failsafe {
             String c = command.toLowerCase(Locale.ROOT);
             if (c.startsWith("warp") || c.startsWith("hub") || c.equals("is") || c.startsWith("skyblock")
                     || c.startsWith("play") || c.startsWith("lobby") || c.startsWith("visit")) {
-                lastOwnWarpCommandAt = System.currentTimeMillis();
+                lastOwnWarpCommandAt = com.coflnet.pathing.sim.SimClock.millis();
             }
         });
         ClientReceiveMessageEvents.GAME.register((message, overlay) -> {
-            if (!overlay) onChat(ScreenUtil.cleanName(message.getString()), false);
+            if (!overlay) {
+                String text = ScreenUtil.cleanName(message.getString());
+                // "Warping...", "Warping you to your SkyBlock island...", "Sending you to ...":
+                // the server announces every warp, also the ones from menus / NPCs / portals that
+                // are no command of ours - the teleport right after is no staff check
+                if (text.startsWith("Warping") || text.startsWith("Sending you to")
+                        || text.startsWith("Sending to server")) {
+                    lastOwnWarpCommandAt = com.coflnet.pathing.sim.SimClock.millis();
+                }
+                onChat(text, false);
+            }
         });
         ClientReceiveMessageEvents.CHAT.register((message, signed, sender, params, time) ->
                 onChat(ScreenUtil.cleanName(message.getString()), false));
@@ -108,7 +118,7 @@ public final class Failsafe {
 
     /** True while a reaction is running: every bot pauses (keys free) until it is false again. */
     public static boolean holding() {
-        return step != Step.NONE && step != Step.ITEM_NOTICE || System.currentTimeMillis() < holdUntil;
+        return step != Step.NONE && step != Step.ITEM_NOTICE || com.coflnet.pathing.sim.SimClock.millis() < holdUntil;
     }
 
     /** True while the bots must not switch the held item (a swap was "not noticed yet"). */
@@ -123,7 +133,7 @@ public final class Failsafe {
     }
 
     private static String ago(long at) {
-        long s = (System.currentTimeMillis() - at) / 1000;
+        long s = (com.coflnet.pathing.sim.SimClock.millis() - at) / 1000;
         return s < 60 ? s + " s ago" : (s / 60) + " min ago";
     }
 
@@ -139,7 +149,7 @@ public final class Failsafe {
 
     /** Our own warps / commands / world changes explain any teleport right now. */
     private static boolean ownMovement() {
-        long now = System.currentTimeMillis();
+        long now = com.coflnet.pathing.sim.SimClock.millis();
         return com.coflnet.pathing.AotvAssist.isBusy()
                 || now - com.coflnet.pathing.AotvAssist.lastWarpAt() < 4_000L
                 || now - lastOwnWarpCommandAt < 10_000L
@@ -162,6 +172,14 @@ public final class Failsafe {
             return;
         }
         if (distance >= PlayerSettings.failsafeTeleportBlocks) {
+            // our own AOTV: the teleport reach of the item in the hand, shortly after our click
+            // (the server's answer can come late; "Teleported 12 blocks" was our 12-block AOTV)
+            int reach = mc.player == null ? 0 : com.coflnet.pathing.AotvAssist.teleportReach(mc.player);
+            long sinceWarp = com.coflnet.pathing.sim.SimClock.millis() - com.coflnet.pathing.AotvAssist.lastWarpAt();
+            if (!testMode && reach > 0 && distance <= reach + 2.0 && sinceWarp < 15_000L) {
+                minor("Own teleport landed " + Math.round(distance) + " blocks away", false);
+                return;
+            }
             offensive("Teleported " + Math.round(distance) + " blocks by the server");
             return;
         }
@@ -172,7 +190,7 @@ public final class Failsafe {
     /** The server turned our camera. */
     public static void onServerRotation(float degrees) {
         if (!watching() || ownMovement() || degrees < 0.5f) return;
-        long now = System.currentTimeMillis();
+        long now = com.coflnet.pathing.sim.SimClock.millis();
         rotationEvents.addLast(now);
         while (!rotationEvents.isEmpty() && now - rotationEvents.peekFirst() > 30_000L) rotationEvents.removeFirst();
         if (degrees >= PlayerSettings.failsafeRotationDegrees) {
@@ -193,7 +211,7 @@ public final class Failsafe {
         slotFrozen = true;
         // keep going as if nothing happened, and only "notice" it after a while
         int min = Math.max(1, PlayerSettings.failsafeItemMinS), max = Math.max(min, PlayerSettings.failsafeItemMaxS);
-        itemNoticeAt = System.currentTimeMillis() + 1_000L * ThreadLocalRandom.current().nextInt(min, max + 1);
+        itemNoticeAt = com.coflnet.pathing.sim.SimClock.millis() + 1_000L * ThreadLocalRandom.current().nextInt(min, max + 1);
         if (step == Step.NONE) {
             step = Step.ITEM_NOTICE;
             reason = what;
@@ -203,6 +221,8 @@ public final class Failsafe {
     /** A block changed near us; called for every server block update. */
     public static void onBlockChange(BlockPos pos, BlockState before, BlockState after) {
         if (!watching() || !PlayerSettings.failsafeBlocks) return;
+        // right after a warp the new area loads around us: blocks "appear" by the hundred
+        if (ownMovement()) return;
         Minecraft mc = Minecraft.getInstance();
         LocalPlayer player = mc.player;
         if (player == null || mc.level == null) return;
@@ -234,7 +254,7 @@ public final class Failsafe {
     }
 
     private static void addBlockEvent(boolean inFov) {
-        long now = System.currentTimeMillis();
+        long now = com.coflnet.pathing.sim.SimClock.millis();
         blockEvents.addLast(new long[]{now, inFov ? 1 : 0});
     }
 
@@ -265,7 +285,7 @@ public final class Failsafe {
         String me = mc.player.getName().getString();
         FailsafeChat.Line line = FailsafeChat.parse(text, me);
         if (line == null) return;
-        long now = System.currentTimeMillis();
+        long now = com.coflnet.pathing.sim.SimClock.millis();
         Long last = repliedTo.get(line.sender().toLowerCase(Locale.ROOT));
         while (!replies.isEmpty() && now - replies.peekFirst() > 300_000L) replies.removeFirst();
         if (!test && ((last != null && now - last < 25_000L) || replies.size() >= 4)) return; // no chat spam
@@ -284,7 +304,7 @@ public final class Failsafe {
     // ------------------------------------------------------------------ reactions
 
     private static void minor(String why, boolean glance) {
-        long now = System.currentTimeMillis();
+        long now = com.coflnet.pathing.sim.SimClock.millis();
         minorEvents.addLast(now);
         while (!minorEvents.isEmpty() && now - minorEvents.peekFirst() > 20_000L) minorEvents.removeFirst();
         if (minorEvents.size() >= 5) {
@@ -302,7 +322,7 @@ public final class Failsafe {
     }
 
     private static void offensive(String why) {
-        long now = System.currentTimeMillis();
+        long now = com.coflnet.pathing.sim.SimClock.millis();
         if (step == Step.OFFENSIVE_WAIT || step == Step.OFFENSIVE_TYPED) return;
         if (now - lastOffensiveAt < 8_000L) return; // one reaction per incident
         lastOffensiveAt = now;
@@ -317,7 +337,7 @@ public final class Failsafe {
 
     private static void trigger(String why) {
         lastTrigger = why;
-        lastTriggerAt = System.currentTimeMillis();
+        lastTriggerAt = com.coflnet.pathing.sim.SimClock.millis();
         System.out.println("[Failsafe] " + why);
         Minecraft mc = Minecraft.getInstance();
         if (mc.player == null) return;
@@ -329,11 +349,11 @@ public final class Failsafe {
 
     private static void start(Step s, long ms) {
         step = s;
-        stepUntil = System.currentTimeMillis() + ms;
+        stepUntil = com.coflnet.pathing.sim.SimClock.millis() + ms;
     }
 
     private static void hold(long ms) {
-        holdUntil = Math.max(holdUntil, System.currentTimeMillis() + ms);
+        holdUntil = Math.max(holdUntil, com.coflnet.pathing.sim.SimClock.millis() + ms);
     }
 
     private static void done() {
@@ -376,7 +396,7 @@ public final class Failsafe {
         if (mc.level != level) {
             history.clear();
             level = mc.level;
-            levelChangedAt = System.currentTimeMillis();
+            levelChangedAt = com.coflnet.pathing.sim.SimClock.millis();
             blockEvents.clear();
         }
         if (mc.player == null) {
@@ -384,7 +404,7 @@ public final class Failsafe {
             slotFrozen = false;
             return;
         }
-        long now = System.currentTimeMillis();
+        long now = com.coflnet.pathing.sim.SimClock.millis();
         if (PlayerSettings.failsafeEnabled) checkBlocks(now);
         switch (step) {
             case NONE -> {
@@ -485,17 +505,17 @@ public final class Failsafe {
         glanceFromYaw = mc.player.getYRot();
         glanceYaw = ThreadLocalRandom.current().nextBoolean() ? yawOffset : -yawOffset;
         glancePitch = (ThreadLocalRandom.current().nextFloat() - 0.5f) * 10f;
-        glanceStart = System.currentTimeMillis();
+        glanceStart = com.coflnet.pathing.sim.SimClock.millis();
         glanceEnd = glanceStart + ms * 2;
     }
 
     /** Called every frame before the bots' own camera: a short look to the side and back. */
     public static void frame(Minecraft mc) {
         LocalPlayer player = mc.player;
-        long nanos = System.nanoTime();
+        long nanos = com.coflnet.pathing.sim.SimClock.nanos();
         double dt = lastFrame == 0 ? 0 : Math.min(0.05, (nanos - lastFrame) / 1e9);
         lastFrame = nanos;
-        long now = System.currentTimeMillis();
+        long now = com.coflnet.pathing.sim.SimClock.millis();
         if (player == null || glanceEnd == 0 || now > glanceEnd || mc.gui.screen() != null) return;
         double t = (now - glanceStart) / (double) (glanceEnd - glanceStart);
         float wave = (float) Math.sin(Math.PI * Math.clamp(t, 0, 1));
@@ -507,7 +527,7 @@ public final class Failsafe {
 
     /** True while the fail-safe moves the camera (bots keep their hands off it). */
     public static boolean ownsCamera() {
-        return glanceEnd != 0 && System.currentTimeMillis() <= glanceEnd;
+        return glanceEnd != 0 && com.coflnet.pathing.sim.SimClock.millis() <= glanceEnd;
     }
 
     // ------------------------------------------------------------------ tests (module buttons)

@@ -124,6 +124,11 @@ public abstract class Movement implements IMovement, MovementHelper {
     public MovementStatus update() {
         ctx.player().getAbilities().flying = false;
         currentState = updateState(currentState);
+        // on the last block before an edge, "there" only counts once we stopped: at SkyBlock speed
+        // the slide carried the bot off the 1x1 pillar right after the movement was done
+        if (currentState.getStatus() == MovementStatus.SUCCESS && stillSlidingToEdge()) {
+            currentState.setStatus(MovementStatus.RUNNING);
+        }
         if (MovementHelper.isLiquid(ctx, ctx.playerFeet()) && ctx.player().position().y < dest.y + 0.6) {
             currentState.setInput(Input.JUMP, true);
         }
@@ -145,6 +150,8 @@ public abstract class Movement implements IMovement, MovementHelper {
             currentState.setTarget(new MovementState.MovementTarget(
                     toCarrot.withPitch(currentState.getTarget().getRotation().get().getPitch()), false));
         }
+        preTurn();
+        noTurnBack();
         currentState.getTarget().getRotation().ifPresent(rotation -> {
             baritone.getLookBehavior().updateTarget(
                     rotation,
@@ -153,6 +160,8 @@ public abstract class Movement implements IMovement, MovementHelper {
                 alignInputsWithTurn(currentState, rotation);
             }
         });
+        dropStyle();
+        edgeBrake();
         baritone.getInputOverrideHandler().clearAllKeys();
         currentState.getInputStates().forEach((input, forced) -> {
             baritone.getInputOverrideHandler().setInputForceState(input, forced);
@@ -175,6 +184,151 @@ public abstract class Movement implements IMovement, MovementHelper {
      * direction from the yaw we really have (like a player who strafes a little into a corner);
      * a turn of more than ~110 degrees waits the two or three ticks it takes.
      */
+    /**
+     * Already moving along the move at speed: never turn back to the block centre. At SkyBlock
+     * speed every 1-block step overshot its centre, the aim flipped 100-180 degrees back and forth
+     * every two ticks and the bot drifted off a 1-wide path (levels 10/11). Past the centre the
+     * executor moves on to the next movement anyway.
+     */
+    private void noTurnBack() {
+        if (currentState.getStatus() != MovementStatus.RUNNING || currentState.getTarget().hasToForceRotations()
+                || currentState.getTarget().getRotation().isEmpty()
+                || !(this instanceof baritone.pathing.movement.movements.MovementTraverse
+                || this instanceof baritone.pathing.movement.movements.MovementDiagonal
+                || this instanceof baritone.pathing.movement.movements.MovementDescend
+                || this instanceof baritone.pathing.movement.movements.MovementAscend
+                || this instanceof baritone.pathing.movement.movements.MovementFall)) {
+            return;
+        }
+        int dx = dest.x - src.x, dz = dest.z - src.z;
+        double len = Math.sqrt(dx * dx + dz * dz);
+        if (len == 0) return;
+        net.minecraft.world.phys.Vec3 v = ctx.player().getDeltaMovement();
+        double along = (v.x * dx + v.z * dz) / len;
+        if (along < 0.15) return;
+        if (edgeAfterDest()) return; // stopping on the last block before an edge may need a turn back
+        float dirYaw = (float) Math.toDegrees(Math.atan2(-dx, dz));
+        Rotation r = currentState.getTarget().getRotation().get();
+        if (Math.abs(net.minecraft.util.Mth.wrapDegrees(r.getYaw() - dirYaw)) > 75f) {
+            currentState.setTarget(new MovementState.MovementTarget(new Rotation(dirYaw, r.getPitch()), false));
+        }
+    }
+
+    private boolean stillSlidingToEdge() {
+        if (!(this instanceof baritone.pathing.movement.movements.MovementTraverse
+                || this instanceof baritone.pathing.movement.movements.MovementDiagonal
+                || this instanceof baritone.pathing.movement.movements.MovementAscend
+                || this instanceof baritone.pathing.movement.movements.MovementDescend)
+                || !ctx.player().onGround() || !edgeAfterDest()) {
+            return false;
+        }
+        int dx = dest.x - src.x, dz = dest.z - src.z;
+        double len = Math.sqrt(dx * dx + dz * dz);
+        net.minecraft.world.phys.Vec3 v = ctx.player().getDeltaMovement();
+        return len > 0 && (v.x * dx + v.z * dz) / len > 0.06;
+    }
+
+    /** Beyond the destination (one more block the same way) there is no floor: an edge. */
+    private boolean edgeAfterDest() {
+        int dx = Integer.signum(dest.x - src.x), dz = Integer.signum(dest.z - src.z);
+        if (dx == 0 && dz == 0) return false;
+        BetterBlockPos beyond = new BetterBlockPos(dest.x + dx, dest.y - 1, dest.z + dz);
+        return !MovementHelper.canWalkOn(ctx, beyond) && !MovementHelper.canWalkOn(ctx, beyond.below());
+    }
+
+    /**
+     * Stop on the last block before an edge: at SkyBlock speed the momentum alone carries a player
+     * more than a block (ground: x0.546 per tick). Let go - and brake - so it ends on the block.
+     * Level 10/11: over the 1x1 pillar top and down the other side.
+     */
+    private void edgeBrake() {
+        if (currentState.getStatus() != MovementStatus.RUNNING || !ctx.player().onGround()
+                || !(this instanceof baritone.pathing.movement.movements.MovementTraverse
+                || this instanceof baritone.pathing.movement.movements.MovementDiagonal
+                || this instanceof baritone.pathing.movement.movements.MovementAscend
+                || this instanceof baritone.pathing.movement.movements.MovementDescend)
+                || !edgeAfterDest()) {
+            return;
+        }
+        int dx = dest.x - src.x, dz = dest.z - src.z;
+        double len = Math.sqrt(dx * dx + dz * dz);
+        if (len == 0) return;
+        net.minecraft.world.phys.Vec3 p = ctx.player().position(), v = ctx.player().getDeltaMovement();
+        double left = ((dest.x + 0.5 - p.x) * dx + (dest.z + 0.5 - p.z) * dz) / len;
+        double along = (v.x * dx + v.z * dz) / len;
+        if (along <= 0.05) return;
+        // what friction alone still carries us, plus this tick's move (keys act from the next one)
+        double coast = along / (1 - 0.546) + along;
+        if (coast > left + 0.15) {
+            currentState.setInput(Input.MOVE_FORWARD, false);
+            currentState.setInput(Input.SPRINT, false);
+            if (coast > left + 0.5) currentState.setInput(Input.MOVE_BACK, true);
+        }
+    }
+
+    /** No floor beside the move (left and right of start and end): a 1-wide path. */
+    private boolean narrowHere() {
+        int dx = Integer.signum(dest.x - src.x), dz = Integer.signum(dest.z - src.z);
+        if (dx == 0 && dz == 0) return false;
+        int sx = -dz, sz = dx; // sideways
+        for (BetterBlockPos p : new BetterBlockPos[]{src, dest}) {
+            int floorY = p.y - 1;
+            if (MovementHelper.canWalkOn(ctx, new BetterBlockPos(p.x + sx, floorY, p.z + sz))
+                    || MovementHelper.canWalkOn(ctx, new BetterBlockPos(p.x - sx, floorY, p.z - sz))
+                    || MovementHelper.canWalkOn(ctx, new BetterBlockPos(p.x + sx, floorY - 1, p.z + sz))
+                    || MovementHelper.canWalkOn(ctx, new BetterBlockPos(p.x - sx, floorY - 1, p.z - sz))) {
+                return false;
+            }
+        }
+        return true;
+    }
+
+    /** Turn style 2: near the end of a walking move, aim part of the way towards the next one. */
+    private void preTurn() {
+        if (Baritone.settings().turnStyle.value != 2 || nextYaw == null
+                || currentState.getStatus() != MovementStatus.RUNNING
+                || currentState.getTarget().hasToForceRotations()
+                || !(this instanceof baritone.pathing.movement.movements.MovementTraverse
+                || this instanceof baritone.pathing.movement.movements.MovementDiagonal)
+                || currentState.getTarget().getRotation().isEmpty()) {
+            return;
+        }
+        double dx = dest.x + 0.5 - ctx.player().position().x, dz = dest.z + 0.5 - ctx.player().position().z;
+        double left = Math.sqrt(dx * dx + dz * dz);
+        double within = Math.max(0.2, Baritone.settings().preTurnDistance.value);
+        if (left >= within) {
+            return;
+        }
+        Rotation r = currentState.getTarget().getRotation().get();
+        float share = (float) (1.0 - left / within) * 0.5f; // at the corner: half way round
+        float yaw = r.getYaw() + net.minecraft.util.Mth.wrapDegrees(nextYaw - r.getYaw()) * share;
+        currentState.setTarget(new MovementState.MovementTarget(new Rotation(yaw, r.getPitch()), false));
+    }
+
+    /** Drop style 1/2 for walking off an edge (descend / fall, stairs are slopes and stay as they are). */
+    private void dropStyle() {
+        int style = Baritone.settings().dropStyle.value;
+        if (style == 0 || currentState.getStatus() != MovementStatus.RUNNING
+                || !(this instanceof baritone.pathing.movement.movements.MovementDescend
+                || this instanceof baritone.pathing.movement.movements.MovementFall)
+                || !ctx.player().onGround() || !ctx.playerFeet().equals(src)
+                || MovementHelper.isRamp(ctx, src, dest)) {
+            return;
+        }
+        currentState.setInput(Input.SPRINT, false);
+        if (style == 2) {
+            double jx = dest.x - src.x, jz = dest.z - src.z;
+            double len = Math.sqrt(jx * jx + jz * jz);
+            if (len == 0) return;
+            net.minecraft.world.phys.Vec3 p = ctx.player().position(), v = ctx.player().getDeltaMovement();
+            double along = ((p.x - (src.x + 0.5)) * jx + (p.z - (src.z + 0.5)) * jz) / len;
+            double speed = (v.x * jx + v.z * jz) / len;
+            if (along > 0.1 && speed > 0.08) {
+                currentState.setInput(Input.MOVE_FORWARD, false); // brake at the edge, then step off slowly
+            }
+        }
+    }
+
     private void alignInputsWithTurn(MovementState state, Rotation rotation) {
         java.util.Map<Input, Boolean> inputs = state.getInputStates();
         if (!Boolean.TRUE.equals(inputs.get(Input.MOVE_FORWARD))
@@ -189,8 +343,26 @@ public abstract class Movement implements IMovement, MovementHelper {
         // With the walking yaw smoothed (moveYawSmoothing) it lags the block-centre aim a bit on
         // every zig-zag; forward still makes good progress up to ~40 degrees, and strafing on
         // every small lag looked like walking sideways back and forth.
-        float tolerance = Baritone.settings().moveYawSmoothing.value > 0 ? 40f : 25f;
+        boolean narrow = narrowHere();
+        // on a 1-wide path a few degrees off is a block sideways at SkyBlock speed
+        float tolerance = narrow ? 6f : Baritone.settings().moveYawSmoothing.value > 0 ? 40f : 25f;
         if (Math.abs(off) <= tolerance) {
+            return;
+        }
+        if (narrow) {
+            // a 1-wide path (no floor left and right): no strafing into the turn - at SkyBlock
+            // speed the side keys carried the bot off the edge (levels 10/11). Stand and turn.
+            state.setInput(Input.MOVE_FORWARD, false);
+            state.setInput(Input.SPRINT, false);
+            return;
+        }
+        if (Baritone.settings().turnStyle.value == 1 && Math.abs(off) > Baritone.settings().turnStopAngle.value) {
+            // turn style 1: stand (and sneak) until the camera is round, then walk on
+            state.setInput(Input.MOVE_FORWARD, false);
+            state.setInput(Input.SPRINT, false);
+            if (Baritone.settings().turnSneak.value && ctx.player().onGround()) {
+                state.setInput(Input.SNEAK, true);
+            }
             return;
         }
         state.setInput(Input.MOVE_FORWARD, false);
@@ -214,6 +386,13 @@ public abstract class Movement implements IMovement, MovementHelper {
 
     public void setCarrot(net.minecraft.world.phys.Vec3 carrot) {
         this.carrot = carrot;
+    }
+
+    /** Air Client: yaw of the movement after this one (turn style 2 turns towards it early), or null. */
+    private Float nextYaw;
+
+    public void setNextYaw(Float nextYaw) {
+        this.nextYaw = nextYaw;
     }
 
     protected boolean prepared(MovementState state) {
