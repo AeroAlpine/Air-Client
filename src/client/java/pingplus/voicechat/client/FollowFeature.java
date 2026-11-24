@@ -4,6 +4,7 @@ import baritone.api.BaritoneAPI;
 import baritone.api.IBaritone;
 import baritone.api.process.IFollowProcess;
 import com.coflnet.pathing.EntityObstacles;
+import com.coflnet.pathing.PlayerFollowProcess;
 import com.coflnet.pathing.SkyblockTargets;
 import com.coflnet.pathing.TargetSwitch;
 import net.minecraft.ChatFormatting;
@@ -22,9 +23,9 @@ import java.util.concurrent.ThreadLocalRandom;
 
 /**
  * Combat (formerly Follow): while {@link PlayerSettings#combatEnabled} (GUI toggle or hotkey),
- * follows the nearest player or entity matching one of {@link PlayerSettings#combatTargets}
- * with Baritone's follow process (real pathing, keeps {@link PlayerSettings#followDistance}
- * blocks distance).
+ * follows a player or entity matching one of {@link PlayerSettings#combatTargets}.
+ * Named players in follow-only mode use a moving Baritone goal and maintain
+ * {@link PlayerSettings#followDistance} when the route is clear.
  *
  * <p>A name may be a player name, part of an entity's name ("Zealot", also SkyBlock mobs whose
  * name is on a nametag armor stand) or an entity type ("zombie", "minecraft:zombie"). With
@@ -34,6 +35,7 @@ import java.util.concurrent.ThreadLocalRandom;
  */
 public final class FollowFeature {
     private static final double MAX_DISTANCE = 96.0;
+    private static final PlayerFollowProcess PLAYER_FOLLOW = new PlayerFollowProcess();
     private static Entity followed;
     private static Entity issued;
     private static boolean active;
@@ -369,6 +371,11 @@ public final class FollowFeature {
         if (otherBotUsesBaritone()) {
             return new Status(true, "Paused (other bot)", "", 0, next, done, running);
         }
+        if (!attackOn() && PLAYER_FOLLOW.targetName() != null) {
+            Player target = PLAYER_FOLLOW.target();
+            return new Status(true, PLAYER_FOLLOW.status(), PLAYER_FOLLOW.targetName(),
+                    target == null ? -1 : player.distanceTo(target), List.of(), done, running);
+        }
         if (followed == null) {
             return new Status(true, "Searching", "", 0, next, done, running);
         }
@@ -412,6 +419,7 @@ public final class FollowFeature {
             return;
         }
         if (walkGoal != null && borrowed == null && player != null && client.level != null) {
+            stopPlayerFollow();
             walkTick(client, player);
             return;
         }
@@ -421,6 +429,9 @@ public final class FollowFeature {
             return;
         }
         long nowMs = com.coflnet.pathing.sim.SimClock.millis();
+        if (!attackOn() && followPlayer(client, player, names, nowMs)) return;
+        stopPlayerFollow();
+
         HIT_ONCE.values().removeIf(until -> until <= nowMs);
         UNREACHABLE.values().removeIf(until -> until <= nowMs);
         if (oneHit() && followed != null && !(followed instanceof Player)
@@ -586,6 +597,46 @@ public final class FollowFeature {
         }
     }
 
+    private static boolean followPlayer(Minecraft client, LocalPlayer player, List<String> names, long now) {
+        IBaritone baritone = primary();
+        if (baritone == null) return false;
+
+        boolean wasTracking = PLAYER_FOLLOW.targetName() != null;
+        PLAYER_FOLLOW.attach(baritone);
+        if (!PLAYER_FOLLOW.update(client.level, player, names, Math.clamp(PlayerSettings.followDistance, 1, 16), now)) {
+            if (wasTracking) {
+                followed = null;
+                stopBaritone();
+            }
+            return false;
+        }
+        if (!wasTracking) {
+            stopBaritone();
+            CHASE.stop();
+            chaseTarget = null;
+            queue.clear();
+            EntityObstacles.setQueue(null);
+        }
+        Player target = PLAYER_FOLLOW.target();
+        if (target != followed) lastSwitchAt = now;
+        followed = target;
+        active = true;
+        idleLooking = false;
+        EntityObstacles.setTarget(target);
+        KillAuraFeature.setForcedTarget(null);
+        configure(false);
+        updateLook(client, player, baritone, target, false);
+        return true;
+    }
+
+    private static void stopPlayerFollow() {
+        if (PLAYER_FOLLOW.targetName() != null) {
+            PLAYER_FOLLOW.reset();
+            followed = null;
+            stopBaritone();
+        }
+    }
+
     /**
      * Walking: look where we go (a point a bit ahead on the path). Standing at
      * the target: look at it (or at nearby players). While KillAura has the
@@ -602,8 +653,8 @@ public final class FollowFeature {
         long turnToNewTarget = oneHit() ? 250 : 450;
         // only to a mob we can see: behind a wall the turn aimed through it, and with many mobs the
         // camera flipped down to each new one and back up to the path ("up, down, zack zack")
-        if (com.coflnet.pathing.sim.SimClock.millis() - lastSwitchAt < turnToNewTarget && player.hasLineOfSight(target)
-                && player.distanceTo(target) < 12.0) {
+        if (target != null && com.coflnet.pathing.sim.SimClock.millis() - lastSwitchAt < turnToNewTarget
+                && player.hasLineOfSight(target) && player.distanceTo(target) < 12.0) {
             // Just picked a new target: turn towards it while the new path is planned, like a
             // player who spots the next mob, instead of following the old path's direction.
             smoothLook = null;
@@ -618,7 +669,7 @@ public final class FollowFeature {
             // block of it (that was the left-right-left twitching on diagonal paths).
             smoothLook = smoothLook == null ? ahead : smoothLook.lerp(ahead, com.coflnet.pathing.MovementStyle.lookBlend());
             net.minecraft.world.phys.Vec3 look = smoothLook;
-            if (player.hasLineOfSight(target) && player.distanceTo(target) < 10.0) {
+            if (target != null && player.hasLineOfSight(target) && player.distanceTo(target) < 10.0) {
                 // a player keeps an eye on the mob he walks to: a fifth of the way towards it
                 // (only close: far away it pulled against the path and the camera shook)
                 net.minecraft.world.phys.Vec3 at = new net.minecraft.world.phys.Vec3(target.getX(),
@@ -631,6 +682,10 @@ public final class FollowFeature {
             return;
         }
         smoothLook = null;
+        if (target == null) {
+            hasLook = false;
+            return;
+        }
         if (!attacking && PlayerSettings.followLookAtNearbyPlayers && lookAtNearbyPlayer(client, player, target)) {
             return;
         }
@@ -789,16 +844,19 @@ public final class FollowFeature {
     }
 
     /**
-     * Player names first (in list order), then the nearest entity whose name / nametag / type
-     * matches any of the names. A SkyBlock nametag stand resolves to the mob under it; a stand
+     * While attacking, player names come first in list order. Otherwise the nearest eligible
+     * entity whose name, nametag or type matches any of the names is selected. A SkyBlock nametag stand resolves to the mob under it; a stand
      * without a living mob (the mob just died) is skipped, not followed.
      */
     static Entity findTarget(Minecraft client, LocalPlayer player, List<String> names) {
-        for (String name : names) {
-            for (Player other : client.level.players()) {
-                if (other != player && !other.isSpectator()
-                        && other.getGameProfile().name().equalsIgnoreCase(name)) {
-                    return other;
+        boolean attacking = attackOn();
+        if (attacking) {
+            for (String name : names) {
+                for (Player other : client.level.players()) {
+                    if (other != player && !other.isSpectator() && valid(other, player)
+                            && other.getGameProfile().name().equalsIgnoreCase(name)) {
+                        return other;
+                    }
                 }
             }
         }
@@ -806,7 +864,8 @@ public final class FollowFeature {
         Entity best = null;
         double bestDistance = MAX_DISTANCE * MAX_DISTANCE;
         for (Entity entity : client.level.entitiesForRendering()) {
-            if (entity == player || !entity.isAlive() || entity.isRemoved()) {
+            if (entity == player || !entity.isAlive() || entity.isRemoved()
+                    || (entity instanceof Player other && (!attacking || other.isSpectator()))) {
                 continue;
             }
             if (wanted.stream().noneMatch(w -> nameMatches(entity, w))) {
@@ -1202,6 +1261,7 @@ public final class FollowFeature {
     }
 
     private static void release() {
+        PLAYER_FOLLOW.reset();
         CHASE.stop();
         WALK.releaseKeys(Minecraft.getInstance());
         LEGACY_WALK.releaseKeys(Minecraft.getInstance());
