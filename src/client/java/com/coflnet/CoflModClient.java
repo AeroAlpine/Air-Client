@@ -228,6 +228,7 @@ public class CoflModClient implements ClientModInitializer {
         com.coflnet.experiments.AutoExperimentTable.init();
         com.coflnet.utils.SkyblockLocation.init();
         com.coflnet.flipper.ServerRestartHandler.init();
+        com.coflnet.flipper.AutoRejoin.init();
         com.coflnet.ahflipper.AhAutomationConfig.load();
         com.coflnet.pathing.PathfinderSystem.init();
         com.coflnet.pathing.astar.AStarTestHarness.init();

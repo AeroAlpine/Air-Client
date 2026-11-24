@@ -202,17 +202,17 @@ public class Trader {
             ScreenUtil.sleep(5_000);
             if (stopRequested || state != State.RUNNING) return;
             long nowMs = System.currentTimeMillis();
-            if (paused || isAhPriority() || nowMs < orderCooldownUntil) {
+            boolean ahBusy = com.coflnet.ahflipper.AhFlipperMod.isRunningGuiAction()
+                    || com.coflnet.ahflipper.AhFlipperMod.isBusy();
+            if (paused || isAhPriority() || ahBusy || nowMs < orderCooldownUntil) {
                 // Waiting for the AH (or Hypixel's order cooldown) is no lack of progress:
                 // the minute starts again afterwards.
                 if (troubleSince > 0) troubleSince = nowMs;
                 if (sellPendingSince > 0) sellPendingSince = nowMs;
             } else if (sellPendingSince > 0 && nowMs - sellPendingSince > STUCK_STOP_MS) {
-                stopBecause("Selling has not worked for 1 minute");
-                return;
+                recoverBecause("Selling has not worked for 1 minute");
             } else if (troubleSince > 0 && nowMs - troubleSince > STUCK_STOP_MS) {
-                stopBecause("No progress for 1 minute (" + lastTrouble + ")");
-                return;
+                recoverBecause("No progress for 1 minute (" + lastTrouble + ")");
             }
             long idle = System.currentTimeMillis() - heartbeat;
             if (idle > 45_000L) {
@@ -232,6 +232,24 @@ public class Trader {
                 }
             }
         }
+    }
+
+    /**
+     * No progress for a minute (order menu not reached - often because the AH flipper had the
+     * menu): no stop any more. Close our menu, reset the flags and timers and go on; the
+     * flipper keeps running and tries again.
+     */
+    private void recoverBecause(String reason) {
+        log("Recover: " + reason);
+        chat("§6[Flipper] §e" + reason + " - closing the menu and trying again.");
+        closeOwnGuiOnly();
+        traderOwnsGui = false;
+        SignInput.clear();
+        flowStartAt = 0;
+        long nowMs = System.currentTimeMillis();
+        if (troubleSince > 0) troubleSince = nowMs;
+        if (sellPendingSince > 0) sellPendingSince = nowMs;
+        heartbeat = nowMs;
     }
 
     /**
