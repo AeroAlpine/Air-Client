@@ -324,6 +324,184 @@ public enum Moves {
         }
     },
 
+    // Air Client: long sprint jumps in 16 directions (see MovementLongJump)
+    LONG_JUMP_0(0, 0, 0, true, true) {
+        @Override
+        public Movement apply0(CalculationContext context, BetterBlockPos src) {
+            return MovementLongJump.create(context, src, 0);
+        }
+
+        @Override
+        public void apply(CalculationContext context, int x, int y, int z, MutableMoveResult result) {
+            MovementLongJump.cost(context, x, y, z, 0, result);
+        }
+    },
+    LONG_JUMP_1(0, 0, 0, true, true) {
+        @Override
+        public Movement apply0(CalculationContext context, BetterBlockPos src) {
+            return MovementLongJump.create(context, src, 1);
+        }
+
+        @Override
+        public void apply(CalculationContext context, int x, int y, int z, MutableMoveResult result) {
+            MovementLongJump.cost(context, x, y, z, 1, result);
+        }
+    },
+    LONG_JUMP_2(0, 0, 0, true, true) {
+        @Override
+        public Movement apply0(CalculationContext context, BetterBlockPos src) {
+            return MovementLongJump.create(context, src, 2);
+        }
+
+        @Override
+        public void apply(CalculationContext context, int x, int y, int z, MutableMoveResult result) {
+            MovementLongJump.cost(context, x, y, z, 2, result);
+        }
+    },
+    LONG_JUMP_3(0, 0, 0, true, true) {
+        @Override
+        public Movement apply0(CalculationContext context, BetterBlockPos src) {
+            return MovementLongJump.create(context, src, 3);
+        }
+
+        @Override
+        public void apply(CalculationContext context, int x, int y, int z, MutableMoveResult result) {
+            MovementLongJump.cost(context, x, y, z, 3, result);
+        }
+    },
+    LONG_JUMP_4(0, 0, 0, true, true) {
+        @Override
+        public Movement apply0(CalculationContext context, BetterBlockPos src) {
+            return MovementLongJump.create(context, src, 4);
+        }
+
+        @Override
+        public void apply(CalculationContext context, int x, int y, int z, MutableMoveResult result) {
+            MovementLongJump.cost(context, x, y, z, 4, result);
+        }
+    },
+    LONG_JUMP_5(0, 0, 0, true, true) {
+        @Override
+        public Movement apply0(CalculationContext context, BetterBlockPos src) {
+            return MovementLongJump.create(context, src, 5);
+        }
+
+        @Override
+        public void apply(CalculationContext context, int x, int y, int z, MutableMoveResult result) {
+            MovementLongJump.cost(context, x, y, z, 5, result);
+        }
+    },
+    LONG_JUMP_6(0, 0, 0, true, true) {
+        @Override
+        public Movement apply0(CalculationContext context, BetterBlockPos src) {
+            return MovementLongJump.create(context, src, 6);
+        }
+
+        @Override
+        public void apply(CalculationContext context, int x, int y, int z, MutableMoveResult result) {
+            MovementLongJump.cost(context, x, y, z, 6, result);
+        }
+    },
+    LONG_JUMP_7(0, 0, 0, true, true) {
+        @Override
+        public Movement apply0(CalculationContext context, BetterBlockPos src) {
+            return MovementLongJump.create(context, src, 7);
+        }
+
+        @Override
+        public void apply(CalculationContext context, int x, int y, int z, MutableMoveResult result) {
+            MovementLongJump.cost(context, x, y, z, 7, result);
+        }
+    },
+    LONG_JUMP_8(0, 0, 0, true, true) {
+        @Override
+        public Movement apply0(CalculationContext context, BetterBlockPos src) {
+            return MovementLongJump.create(context, src, 8);
+        }
+
+        @Override
+        public void apply(CalculationContext context, int x, int y, int z, MutableMoveResult result) {
+            MovementLongJump.cost(context, x, y, z, 8, result);
+        }
+    },
+    LONG_JUMP_9(0, 0, 0, true, true) {
+        @Override
+        public Movement apply0(CalculationContext context, BetterBlockPos src) {
+            return MovementLongJump.create(context, src, 9);
+        }
+
+        @Override
+        public void apply(CalculationContext context, int x, int y, int z, MutableMoveResult result) {
+            MovementLongJump.cost(context, x, y, z, 9, result);
+        }
+    },
+    LONG_JUMP_10(0, 0, 0, true, true) {
+        @Override
+        public Movement apply0(CalculationContext context, BetterBlockPos src) {
+            return MovementLongJump.create(context, src, 10);
+        }
+
+        @Override
+        public void apply(CalculationContext context, int x, int y, int z, MutableMoveResult result) {
+            MovementLongJump.cost(context, x, y, z, 10, result);
+        }
+    },
+    LONG_JUMP_11(0, 0, 0, true, true) {
+        @Override
+        public Movement apply0(CalculationContext context, BetterBlockPos src) {
+            return MovementLongJump.create(context, src, 11);
+        }
+
+        @Override
+        public void apply(CalculationContext context, int x, int y, int z, MutableMoveResult result) {
+            MovementLongJump.cost(context, x, y, z, 11, result);
+        }
+    },
+    LONG_JUMP_12(0, 0, 0, true, true) {
+        @Override
+        public Movement apply0(CalculationContext context, BetterBlockPos src) {
+            return MovementLongJump.create(context, src, 12);
+        }
+
+        @Override
+        public void apply(CalculationContext context, int x, int y, int z, MutableMoveResult result) {
+            MovementLongJump.cost(context, x, y, z, 12, result);
+        }
+    },
+    LONG_JUMP_13(0, 0, 0, true, true) {
+        @Override
+        public Movement apply0(CalculationContext context, BetterBlockPos src) {
+            return MovementLongJump.create(context, src, 13);
+        }
+
+        @Override
+        public void apply(CalculationContext context, int x, int y, int z, MutableMoveResult result) {
+            MovementLongJump.cost(context, x, y, z, 13, result);
+        }
+    },
+    LONG_JUMP_14(0, 0, 0, true, true) {
+        @Override
+        public Movement apply0(CalculationContext context, BetterBlockPos src) {
+            return MovementLongJump.create(context, src, 14);
+        }
+
+        @Override
+        public void apply(CalculationContext context, int x, int y, int z, MutableMoveResult result) {
+            MovementLongJump.cost(context, x, y, z, 14, result);
+        }
+    },
+    LONG_JUMP_15(0, 0, 0, true, true) {
+        @Override
+        public Movement apply0(CalculationContext context, BetterBlockPos src) {
+            return MovementLongJump.create(context, src, 15);
+        }
+
+        @Override
+        public void apply(CalculationContext context, int x, int y, int z, MutableMoveResult result) {
+            MovementLongJump.cost(context, x, y, z, 15, result);
+        }
+    },
+
     PARKOUR_NORTH(0, 0, -4, true, true) {
         @Override
         public Movement apply0(CalculationContext context, BetterBlockPos src) {
@@ -785,6 +963,154 @@ public enum Moves {
         public void apply(CalculationContext context, int x, int y, int z, MutableMoveResult result) {
             baritone.pathing.movement.movements.MovementWarp.cost(context, x, y, z,
                     baritone.pathing.movement.movements.MovementWarp.Kind.ETHERWARP, 135.0f, -6.0f, result);
+        }
+    },
+    TELEPORT_NORTH_UP(0, 0, 0, true, true) {
+        @Override
+        public Movement apply0(CalculationContext context, BetterBlockPos src) {
+            return baritone.pathing.movement.movements.MovementWarp.create(context, src,
+                    baritone.pathing.movement.movements.MovementWarp.Kind.TELEPORT, 180.0f, -40.0f);
+        }
+
+        @Override
+        public void apply(CalculationContext context, int x, int y, int z, MutableMoveResult result) {
+            baritone.pathing.movement.movements.MovementWarp.cost(context, x, y, z,
+                    baritone.pathing.movement.movements.MovementWarp.Kind.TELEPORT, 180.0f, -40.0f, result);
+        }
+    },
+    TELEPORT_NORTHEAST_UP(0, 0, 0, true, true) {
+        @Override
+        public Movement apply0(CalculationContext context, BetterBlockPos src) {
+            return baritone.pathing.movement.movements.MovementWarp.create(context, src,
+                    baritone.pathing.movement.movements.MovementWarp.Kind.TELEPORT, -135.0f, -40.0f);
+        }
+
+        @Override
+        public void apply(CalculationContext context, int x, int y, int z, MutableMoveResult result) {
+            baritone.pathing.movement.movements.MovementWarp.cost(context, x, y, z,
+                    baritone.pathing.movement.movements.MovementWarp.Kind.TELEPORT, -135.0f, -40.0f, result);
+        }
+    },
+    TELEPORT_EAST_UP(0, 0, 0, true, true) {
+        @Override
+        public Movement apply0(CalculationContext context, BetterBlockPos src) {
+            return baritone.pathing.movement.movements.MovementWarp.create(context, src,
+                    baritone.pathing.movement.movements.MovementWarp.Kind.TELEPORT, -90.0f, -40.0f);
+        }
+
+        @Override
+        public void apply(CalculationContext context, int x, int y, int z, MutableMoveResult result) {
+            baritone.pathing.movement.movements.MovementWarp.cost(context, x, y, z,
+                    baritone.pathing.movement.movements.MovementWarp.Kind.TELEPORT, -90.0f, -40.0f, result);
+        }
+    },
+    TELEPORT_SOUTHEAST_UP(0, 0, 0, true, true) {
+        @Override
+        public Movement apply0(CalculationContext context, BetterBlockPos src) {
+            return baritone.pathing.movement.movements.MovementWarp.create(context, src,
+                    baritone.pathing.movement.movements.MovementWarp.Kind.TELEPORT, -45.0f, -40.0f);
+        }
+
+        @Override
+        public void apply(CalculationContext context, int x, int y, int z, MutableMoveResult result) {
+            baritone.pathing.movement.movements.MovementWarp.cost(context, x, y, z,
+                    baritone.pathing.movement.movements.MovementWarp.Kind.TELEPORT, -45.0f, -40.0f, result);
+        }
+    },
+    TELEPORT_SOUTH_UP(0, 0, 0, true, true) {
+        @Override
+        public Movement apply0(CalculationContext context, BetterBlockPos src) {
+            return baritone.pathing.movement.movements.MovementWarp.create(context, src,
+                    baritone.pathing.movement.movements.MovementWarp.Kind.TELEPORT, 0.0f, -40.0f);
+        }
+
+        @Override
+        public void apply(CalculationContext context, int x, int y, int z, MutableMoveResult result) {
+            baritone.pathing.movement.movements.MovementWarp.cost(context, x, y, z,
+                    baritone.pathing.movement.movements.MovementWarp.Kind.TELEPORT, 0.0f, -40.0f, result);
+        }
+    },
+    TELEPORT_SOUTHWEST_UP(0, 0, 0, true, true) {
+        @Override
+        public Movement apply0(CalculationContext context, BetterBlockPos src) {
+            return baritone.pathing.movement.movements.MovementWarp.create(context, src,
+                    baritone.pathing.movement.movements.MovementWarp.Kind.TELEPORT, 45.0f, -40.0f);
+        }
+
+        @Override
+        public void apply(CalculationContext context, int x, int y, int z, MutableMoveResult result) {
+            baritone.pathing.movement.movements.MovementWarp.cost(context, x, y, z,
+                    baritone.pathing.movement.movements.MovementWarp.Kind.TELEPORT, 45.0f, -40.0f, result);
+        }
+    },
+    TELEPORT_WEST_UP(0, 0, 0, true, true) {
+        @Override
+        public Movement apply0(CalculationContext context, BetterBlockPos src) {
+            return baritone.pathing.movement.movements.MovementWarp.create(context, src,
+                    baritone.pathing.movement.movements.MovementWarp.Kind.TELEPORT, 90.0f, -40.0f);
+        }
+
+        @Override
+        public void apply(CalculationContext context, int x, int y, int z, MutableMoveResult result) {
+            baritone.pathing.movement.movements.MovementWarp.cost(context, x, y, z,
+                    baritone.pathing.movement.movements.MovementWarp.Kind.TELEPORT, 90.0f, -40.0f, result);
+        }
+    },
+    TELEPORT_NORTHWEST_UP(0, 0, 0, true, true) {
+        @Override
+        public Movement apply0(CalculationContext context, BetterBlockPos src) {
+            return baritone.pathing.movement.movements.MovementWarp.create(context, src,
+                    baritone.pathing.movement.movements.MovementWarp.Kind.TELEPORT, 135.0f, -40.0f);
+        }
+
+        @Override
+        public void apply(CalculationContext context, int x, int y, int z, MutableMoveResult result) {
+            baritone.pathing.movement.movements.MovementWarp.cost(context, x, y, z,
+                    baritone.pathing.movement.movements.MovementWarp.Kind.TELEPORT, 135.0f, -40.0f, result);
+        }
+    },
+    ETHERWARP_LEDGE_NORTH(0, 0, 0, true, true) {
+        @Override
+        public Movement apply0(CalculationContext context, BetterBlockPos src) {
+            return baritone.pathing.movement.movements.MovementWarp.createLedge(context, src, 0, -1);
+        }
+
+        @Override
+        public void apply(CalculationContext context, int x, int y, int z, MutableMoveResult result) {
+            baritone.pathing.movement.movements.MovementWarp.ledgeCost(context, x, y, z, 0, -1, result);
+        }
+    },
+    ETHERWARP_LEDGE_EAST(0, 0, 0, true, true) {
+        @Override
+        public Movement apply0(CalculationContext context, BetterBlockPos src) {
+            return baritone.pathing.movement.movements.MovementWarp.createLedge(context, src, 1, 0);
+        }
+
+        @Override
+        public void apply(CalculationContext context, int x, int y, int z, MutableMoveResult result) {
+            baritone.pathing.movement.movements.MovementWarp.ledgeCost(context, x, y, z, 1, 0, result);
+        }
+    },
+    ETHERWARP_LEDGE_SOUTH(0, 0, 0, true, true) {
+        @Override
+        public Movement apply0(CalculationContext context, BetterBlockPos src) {
+            return baritone.pathing.movement.movements.MovementWarp.createLedge(context, src, 0, 1);
+        }
+
+        @Override
+        public void apply(CalculationContext context, int x, int y, int z, MutableMoveResult result) {
+            baritone.pathing.movement.movements.MovementWarp.ledgeCost(context, x, y, z, 0, 1, result);
+        }
+    },
+    ETHERWARP_LEDGE_WEST(0, 0, 0, true, true) {
+        @Override
+        public Movement apply0(CalculationContext context, BetterBlockPos src) {
+            return baritone.pathing.movement.movements.MovementWarp.createLedge(context, src, -1, 0);
+        }
+
+        @Override
+        public void apply(CalculationContext context, int x, int y, int z, MutableMoveResult result) {
+            baritone.pathing.movement.movements.MovementWarp.ledgeCost(context, x, y, z, -1, 0, result);
         }
     },
     ETHERWARP_POINT_0(0, 0, 0, true, true) {

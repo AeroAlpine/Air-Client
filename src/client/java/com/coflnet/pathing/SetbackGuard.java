@@ -42,7 +42,7 @@ public final class SetbackGuard {
 
     /** True right after a setback or near a spot with repeated setbacks. */
     public static boolean active() {
-        long now = System.currentTimeMillis();
+        long now = com.coflnet.pathing.sim.SimClock.millis();
         if (now - lastAt < COOLDOWN_MS) {
             return true;
         }

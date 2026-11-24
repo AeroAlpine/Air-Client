@@ -22,3 +22,5 @@ opencode.json
 logs/
 *.log
 .work/
+
+run-sim/

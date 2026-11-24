@@ -137,7 +137,9 @@ public final class KillAuraFeature {
         // exact attack ray, because visibility alone does not mean our current aim is unobstructed.
         return distanceSquared(client, entity) <= reach * reach
                 && client.player.isWithinAttackRange(client.player.getMainHandItem(), entity.getBoundingBox(), 0)
-                // some part of the hitbox reachable without a block (leaves, slab ...) in between
+                // no wall in the direct line, plus a part of the hitbox reachable without a
+                // block (leaves, slab ...) in between
+                && client.player.hasLineOfSight(entity)
                 && com.coflnet.pathing.VisibleGoal.seesAny(client.level, client.player.getEyePosition(), entity);
     }
 
@@ -161,13 +163,14 @@ public final class KillAuraFeature {
         boolean cpsMode = forcedTarget != null && forcedCpsMin > 0;
         if (cpsMode) {
             // Follow's configured click speed instead of the vanilla cooldown.
-            if (System.currentTimeMillis() < nextForcedAttackAt) return;
+            if (com.coflnet.pathing.sim.SimClock.millis() < nextForcedAttackAt) return;
         } else {
             if (client.player.getAttackStrengthScale(0) < 1f) return;
             // Add 50–100 ms at 20 TPS after the normal cooldown, even when switching targets.
             if (extraCooldownTicks > 0) { extraCooldownTicks--; return; }
         }
         if (target == null) return;
+        if (!client.player.hasLineOfSight(target)) return;
         Vec3 eye = client.player.getEyePosition();
         // Build a finite ray from the eyes along the CURRENT camera direction, not directly
         // toward the target. Aiming must actually reach the target before an attack is allowed.
@@ -197,19 +200,19 @@ public final class KillAuraFeature {
         // Play the normal main-hand swing as well; the attack request and swing are separate calls.
         client.player.swing(InteractionHand.MAIN_HAND);
         lastAttackId = target.getId();
-        lastAttackAt = System.currentTimeMillis();
+        lastAttackAt = com.coflnet.pathing.sim.SimClock.millis();
         extraCooldownTicks = ThreadLocalRandom.current().nextInt(1, 3);
         if (cpsMode) {
             double cps = forcedCpsMin + ThreadLocalRandom.current().nextDouble()
                     * Math.max(0, forcedCpsMax - forcedCpsMin);
-            nextForcedAttackAt = System.currentTimeMillis() + Math.round(1000.0 / Math.max(0.5, cps));
+            nextForcedAttackAt = com.coflnet.pathing.sim.SimClock.millis() + Math.round(1000.0 / Math.max(0.5, cps));
         }
     }
 
     /** Called by KillAuraFrameMixin every rendered frame to smoothly update visible aiming. */
     public static void frame(Minecraft client) {
         // nanoTime measures elapsed time without being affected by system-clock adjustments.
-        long now = System.nanoTime();
+        long now = com.coflnet.pathing.sim.SimClock.nanos();
         // Convert nanoseconds to seconds. The first frame gets zero elapsed time to prevent
         // a large initial jump. AimSmoothing also caps long frame intervals after a stall.
         double dt = lastFrame == 0 ? 0 : (now - lastFrame) / 1e9;
@@ -229,8 +232,14 @@ public final class KillAuraFeature {
         // Pitch compares vertical displacement with horizontal distance. hypot computes
         // sqrt(x*x + z*z). Negate the angle because Minecraft uses negative pitch to look up.
         float pitch = (float)-Math.toDegrees(Math.atan2(delta.y, Math.hypot(delta.x, delta.z)));
-        // The configured speed is a maximum number of degrees per second on each axis.
-        float speed = PlayerSettings.killAuraTurnSpeed;
+        // The configured speed is a maximum number of degrees per second on each axis, with
+        // the same human ceiling as the pathfinder (600 deg/s) so nothing snaps instantly.
+        float speed = Math.min(PlayerSettings.killAuraTurnSpeed,
+                (float) com.coflnet.pathing.TurnProfile.HUMAN_MAX_DEG_PER_SEC);
+        if (PlayerSettings.combatEnabled || forcedTarget != null) {
+            // Combat's "Turn to enemy" setting is the limit while Combat / commissioned kills run.
+            speed = Math.min(speed, PlayerSettings.combatRotationSpeed);
+        }
         // Ease toward the desired angles rather than snapping. AimSmoothing takes the short
         // path across the yaw wraparound and slows down near the target without overshooting.
         client.player.setYRot(AimSmoothing.step(client.player.getYRot(), yaw, speed, dt));

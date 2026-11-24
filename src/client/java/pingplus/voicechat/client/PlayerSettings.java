@@ -148,6 +148,12 @@ public final class PlayerSettings {
     public static boolean miningBotMining = true;
     public static boolean miningBotSell = true;
     public static boolean miningBotChat = false;
+    /** Allow etherwarps in the mining pathfinder (off = walk/teleport only). */
+    public static boolean miningBotEtherwarp = true;
+    /** Max camera turn while moving from one mining block to the next (degrees per second). */
+    public static float miningTurnSpeed = 600f;
+    /** Leave a block this many ms before the server breaks it and aim at the next one. */
+    public static int miningEarlySwitchMs = 15;
 
     static {
         load();

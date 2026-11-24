@@ -31,7 +31,22 @@ public class MovementWarp extends Movement {
     public static volatile int[][] etherwarpPoints = new int[0][];
 
     private static final double EYE = 1.62;
+    /** Etherwarp needs sneaking: the eye is lower, and an edge can hide the target from there. */
+    private static final double SNEAK_EYE = 1.27;
     private static final double ETHER_RANGE = 45.0;
+
+    /** The Air Client installs this; Baritone owns the move and the timing. */
+    public interface Executor {
+        boolean execute(Kind kind, float yaw, float pitch, int x, int y, int z);
+
+        boolean busy();
+    }
+
+    public static volatile Executor executor;
+    private boolean started;
+    private long startedAt;
+    private int attempts;
+    private long idleSince;
 
     public final Kind kind;
     /** Look direction of the warp (yaw / pitch in degrees, Minecraft convention). */
@@ -59,8 +74,40 @@ public class MovementWarp extends Movement {
 
     @Override
     public MovementState updateState(MovementState state) {
-        // Baritone's own executor never runs warps (only the Air Client path engine does)
-        return state.setStatus(MovementStatus.UNREACHABLE);
+        Executor ex = executor;
+        if (ex == null) return state.setStatus(MovementStatus.UNREACHABLE);
+        if (!started) {
+            if (!ex.execute(kind, yaw, pitch, dest.x, dest.y, dest.z)) {
+                return state.setStatus(MovementStatus.UNREACHABLE);
+            }
+            started = true;
+            startedAt = System.currentTimeMillis();
+        }
+        if (ex.busy()) {
+            idleSince = 0;
+            return state.setStatus(MovementStatus.RUNNING);
+        }
+        double dist = ctx.player().position().distanceTo(
+                new net.minecraft.world.phys.Vec3(dest.x + 0.5, dest.y, dest.z + 0.5));
+        if (dist < 2.0) return state.setStatus(MovementStatus.SUCCESS);
+        // Air Client: the warp is over (or was dropped quietly) and we are not there. The server's
+        // teleport can come a moment late; after that try once more, then give up so the path is
+        // planned again. Waiting 8 s here was the bot standing at the Forge for 100 ticks per warp.
+        long now = System.currentTimeMillis();
+        if (idleSince == 0) idleSince = now;
+        if (now - idleSince > 600L) {
+            if (attempts < 1) {
+                attempts++;
+                started = false;
+                idleSince = 0;
+                return state.setStatus(MovementStatus.RUNNING);
+            }
+            return state.setStatus(MovementStatus.UNREACHABLE);
+        }
+        if (now - startedAt > 8_000L) {
+            return state.setStatus(MovementStatus.UNREACHABLE);
+        }
+        return state.setStatus(MovementStatus.RUNNING);
     }
 
     public static MovementWarp createPoint(CalculationContext context, BetterBlockPos src, int nth) {
@@ -74,6 +121,45 @@ public class MovementWarp extends Movement {
                 return q.x == dest.x && q.y == dest.y && q.z == dest.z ? q.cost : COST_INF;
             }
         };
+    }
+
+    public static MovementWarp createLedge(CalculationContext context, BetterBlockPos src, int dx, int dz) {
+        MutableMoveResult r = new MutableMoveResult();
+        ledgeCost(context, src.x, src.y, src.z, dx, dz, r);
+        return new MovementWarp(context.getBaritone(), src, new BetterBlockPos(r.x, r.y, r.z), Kind.ETHERWARP, 0f, 0f) {
+            @Override
+            public double calculateCost(CalculationContext c) {
+                MutableMoveResult q = new MutableMoveResult();
+                ledgeCost(c, src.x, src.y, src.z, dx, dz, q);
+                return q.x == dest.x && q.y == dest.y && q.z == dest.z ? q.cost : COST_INF;
+            }
+        };
+    }
+
+    /**
+     * Up a ledge that is too high to jump (2-4 blocks) right in front of us (1-2 blocks away in
+     * direction dx/dz): one etherwarp from the edge onto its top, instead of a long detour.
+     */
+    public static void ledgeCost(CalculationContext context, int x, int y, int z, int dx, int dz, MutableMoveResult res) {
+        res.x = x;
+        res.y = y;
+        res.z = z;
+        res.cost = COST_INF;
+        if (!context.allowEtherwarp) return;
+        double ex = x + 0.5, ey = y + SNEAK_EYE, ez = z + 0.5;
+        for (int dist = 1; dist <= 2; dist++) {
+            int tx = x + dx * dist, tz = z + dz * dist;
+            for (int up = 2; up <= 4; up++) {
+                int top = y + up;
+                if (!standable(context, tx, top, tz)) continue;
+                if (!sees(context, ex, ey, ez, tx, top - 1, tz)) break;
+                res.x = tx;
+                res.y = top;
+                res.z = tz;
+                res.cost = context.etherwarpCost * 0.35 + up * 0.5;
+                return;
+            }
+        }
     }
 
     public static MovementWarp create(CalculationContext context, BetterBlockPos src, Kind kind, float yaw, float pitch) {
@@ -95,7 +181,7 @@ public class MovementWarp extends Movement {
         } else if (!context.allowEtherwarp || (x & 1) != 0 || (z & 1) != 0) {
             return;
         }
-        double ex = x + 0.5, ey = y + EYE, ez = z + 0.5;
+        double ex = x + 0.5, ey = y + (kind == Kind.ETHERWARP ? SNEAK_EYE : EYE), ez = z + 0.5;
         double r = Math.toRadians(yaw), p = Math.toRadians(pitch);
         double dx = -Math.sin(r) * Math.cos(p), dy = -Math.sin(p), dz = Math.cos(r) * Math.cos(p);
         if (kind == Kind.TELEPORT) {
@@ -155,6 +241,7 @@ public class MovementWarp extends Movement {
             if (!standable(context, vx, vy + 1, vz)) return;
             int dist2 = (vx - x) * (vx - x) + (vy + 1 - y) * (vy + 1 - y) + (vz - z) * (vz - z);
             if (dist2 < 25) return;
+            if (Math.abs(vy + 1 - y) < 2) return; // level: walk it (or teleport while walking)
             res.x = vx;
             res.y = vy + 1;
             res.z = vz;
@@ -174,14 +261,14 @@ public class MovementWarp extends Movement {
         res.cost = COST_INF;
         int[][] points = etherwarpPoints;
         if (!context.allowEtherwarp || points.length <= nth) return;
-        double ex = x + 0.5, ey = y + EYE, ez = z + 0.5;
+        double ex = x + 0.5, ey = y + SNEAK_EYE, ez = z + 0.5;
         int seen = 0;
         int[] order = nearestFirst(points, ex, ey, ez);
         for (int idx : order) {
             int[] p = points[idx];
             double dist = Math.sqrt((p[0] + 0.5 - ex) * (p[0] + 0.5 - ex) + (p[1] + 1 - ey) * (p[1] + 1 - ey)
                     + (p[2] + 0.5 - ez) * (p[2] + 0.5 - ez));
-            if (dist > ETHER_RANGE || dist < 4) continue;
+            if (dist > ETHER_RANGE || dist < 4 || Math.abs(p[1] + 1 - y) < 2) continue;
             if (!sees(context, ex, ey, ez, p[0], p[1], p[2])) continue;
             if (seen++ < nth) continue;
             res.x = p[0];

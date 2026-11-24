@@ -30,7 +30,7 @@ public final class LagMonitor {
 
     /** Network thread: a world time packet arrived. */
     public static void onTimePacket(long gameTime) {
-        long now = System.currentTimeMillis();
+        long now = com.coflnet.pathing.sim.SimClock.millis();
         long previousAt = lastPacketAt;
         long previousTime = lastGameTime;
         lastPacketAt = now;
@@ -76,7 +76,7 @@ public final class LagMonitor {
     }
 
     public static boolean isLagging() {
-        return System.currentTimeMillis() < lagUntil;
+        return com.coflnet.pathing.sim.SimClock.millis() < lagUntil;
     }
 
     public static double tps() {

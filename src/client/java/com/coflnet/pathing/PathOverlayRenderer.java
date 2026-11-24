@@ -61,12 +61,16 @@ public final class PathOverlayRenderer extends EntityHitboxDebugRenderer {
         }
     }
 
-    private static final int[] PLAN_COLORS = {0xE04CC2FF, 0xE0FFD24D, 0xE035FFD7, 0xE0C77DFF};
+    /** walk blue, jump yellow, teleport cyan, etherwarp purple, drop orange. */
+    private static final int[] PLAN_COLORS = {0xE04CC2FF, 0xE0FFD24D, 0xE035FFD7, 0xE0C77DFF, 0xE0FF8A3D};
 
-    /** The path engine's line (walk blue, jump yellow, teleport cyan, etherwarp purple), a little above the floor. */
-    private static boolean drawPlan(Minecraft client, float partialTicks) {
-        Vec3 from = client.player.getPosition(partialTicks);
-        List<double[]> plan = PathEngine.overlay(from);
+    /**
+     * The path engine's plan: the walking line at the middle of the player's height; jumps,
+     * drops and warps have no line, only a take-off and a landing marker.
+     */
+    /** The 0.3.7 engine's line (Commission Bot), drawn as in 0.3.7. */
+    private static boolean drawLegacyPlan(Vec3 from) {
+        List<double[]> plan = LegacyPathEngine.overlay(from);
         if (plan.size() < 2) {
             return false;
         }
@@ -79,6 +83,45 @@ public final class PathOverlayRenderer extends EntityHitboxDebugRenderer {
             if (b[3] >= 1) {
                 Gizmos.point(vb, color, 6f);
             }
+        }
+        return true;
+    }
+
+    private static boolean drawPlan(Minecraft client, float partialTicks) {
+        Vec3 from = client.player.getPosition(partialTicks);
+        List<double[]> plan = PathEngine.overlay(from);
+        if (plan.isEmpty()) {
+            return drawLegacyPlan(from);
+        }
+        Vec3 prev = null;
+        // the walking line as a dashed line at head height, the dashes flowing towards the goal
+        double dashOn = 0.35, period = 0.6;
+        double phase = (System.currentTimeMillis() % 100_000L) / 1000.0 * 1.6;
+        double along = 0;
+        for (double[] p : plan) {
+            Vec3 v = new Vec3(p[0], p[1] + 0.7, p[2]);
+            int kind = Math.clamp((int) p[3], 0, 4);
+            if (kind == 0 && (p[4] < 0.5 || prev == null)) {
+                along = p.length > 5 ? p[5] : 0; // dashes anchored to the line, not to where we stand
+            }
+            if (kind == 0 && p[4] > 0.5 && prev != null) {
+                double len = prev.distanceTo(v);
+                double t = 0;
+                while (t < len) {
+                    double pos = (along + t - phase) % period;
+                    if (pos < 0) pos += period;
+                    double step = pos < dashOn ? Math.min(dashOn - pos, len - t) : Math.min(period - pos, len - t);
+                    if (pos < dashOn && step > 0.02) {
+                        Gizmos.line(prev.lerp(v, t / len), prev.lerp(v, (t + step) / len), 0xD08FE3FF, 2.0f);
+                    }
+                    t += Math.max(step, 0.01);
+                }
+                along += len;
+            }
+            if (kind != 0) {
+                Gizmos.point(v, PLAN_COLORS[kind], 7f); // take-off / landing: a dot, no stick
+            }
+            prev = kind == 0 ? v : null;
         }
         return true;
     }

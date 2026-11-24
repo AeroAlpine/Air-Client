@@ -24,7 +24,10 @@
     "ScoreboardMixin",
     "ServerTimeLagMixin",
     "ScrollableWidgetMixin",
-    "WorldRendererMixin"
+    "WorldRendererMixin",
+    "BlockableEventLoopInvoker",
+    "TurboTickMixin",
+    "TurboServerMixin"
   ],
   "injectors": {
     "defaultRequire": 1

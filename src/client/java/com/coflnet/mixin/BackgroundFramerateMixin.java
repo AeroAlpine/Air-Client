@@ -12,6 +12,10 @@ import org.spongepowered.asm.mixin.injection.callback.CallbackInfoReturnable;
 public abstract class BackgroundFramerateMixin {
     @Inject(method = "getFramerateLimit", at = @At("RETURN"), cancellable = true)
     private void cofl$keepAutomationResponsive(CallbackInfoReturnable<Integer> cir) {
+        if (com.coflnet.pathing.sim.TurboClock.unlimitedFrames()) {
+            cir.setReturnValue(260); // simulation turbo: never sleep between frames
+            return;
+        }
         // Minimized and long-idle windows normally drop to 10 FPS. The bots
         // dispatch GUI work on the client thread and need timely frame updates.
         if (cir.getReturnValueI() < BackgroundAutomation.MIN_FPS

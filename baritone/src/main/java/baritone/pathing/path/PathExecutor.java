@@ -56,7 +56,9 @@ public class PathExecutor implements IPathExecutor, Helper {
      * @see <a href="https://github.com/cabaletta/baritone/issues/102">Issue #102</a>
      * @see <a href="https://i.imgur.com/5s5GLnI.png">Anime</a>
      */
-    private static final double MAX_TICKS_AWAY = 200;
+    // Air Client: 2-3 blocks off the path for a second is enough to plan again (was 10 s: the
+    // bot walked on beside the path or stood until the watchdog came)
+    private static final double MAX_TICKS_AWAY = 20;
 
     private final IPath path;
     private int pathPosition;
@@ -238,6 +240,9 @@ public class PathExecutor implements IPathExecutor, Helper {
         movement.setCarrot(null);
         if (Baritone.settings().pathSmoothing.value) {
             int ahead = smoothingTarget(whereAmI);
+            if (Baritone.settings().smoothingZigZagOnly.value && !zigZag(pathPosition, ahead)) {
+                ahead = pathPosition; // a real corner: walk it block by block
+            }
             if (ahead > pathPosition) {
                 // Cut a corner and stand on a later movement's start already: those before it
                 // are done. Without this the current movement led us back to its block centre.
@@ -258,6 +263,7 @@ public class PathExecutor implements IPathExecutor, Helper {
                 }
             }
         }
+        movement.setNextYaw(nextYaw(pathPosition));
         MovementStatus movementStatus = movement.update();
         if (movementStatus == UNREACHABLE || movementStatus == FAILED) {
             logDebug("Movement returns status " + movementStatus);
@@ -295,6 +301,43 @@ public class PathExecutor implements IPathExecutor, Helper {
     }
 
     /** Farthest movement ahead whose destination: flat path, straight line walkable. */
+    /** Yaw of the horizontal step of the movement after {@code index}, or null. */
+    private Float nextYaw(int index) {
+        if (index + 1 >= path.movements().size()) return null;
+        IMovement next = path.movements().get(index + 1);
+        int dx = next.getDest().x - next.getSrc().x, dz = next.getDest().z - next.getSrc().z;
+        if (dx == 0 && dz == 0) return null;
+        return (float) Math.toDegrees(Math.atan2(-dx, dz));
+    }
+
+    /**
+     * The moves from..to approximate one straight line: exactly two step directions 45 degrees
+     * apart (straight and diagonal) that alternate at least twice - Baritone's staircase on a
+     * slanted line. A real corner (one direction, then another) is not a zig-zag.
+     */
+    private boolean zigZag(int from, int to) {
+        java.util.List<String> dirs = new java.util.ArrayList<>();
+        for (int i = from; i <= to && i < path.movements().size(); i++) {
+            IMovement m = path.movements().get(i);
+            int dx = Integer.signum(m.getDest().x - m.getSrc().x), dz = Integer.signum(m.getDest().z - m.getSrc().z);
+            if (dx == 0 && dz == 0) return false;
+            dirs.add(dx + "," + dz);
+        }
+        java.util.Set<String> distinct = new java.util.LinkedHashSet<>(dirs);
+        if (distinct.size() != 2) return false;
+        java.util.Iterator<String> it = distinct.iterator();
+        String[] a = it.next().split(","), b = it.next().split(",");
+        int ax = Integer.parseInt(a[0]), az = Integer.parseInt(a[1]), bx = Integer.parseInt(b[0]), bz = Integer.parseInt(b[1]);
+        boolean diagonalA = ax != 0 && az != 0, diagonalB = bx != 0 && bz != 0;
+        if (diagonalA == diagonalB) return false;
+        // the straight one is one component of the diagonal one: 45 degrees apart
+        boolean neighbours = diagonalA ? (bx == 0 ? bz == az : bx == ax) : (ax == 0 ? az == bz : ax == bx);
+        if (!neighbours) return false;
+        int changes = 0;
+        for (int i = 1; i < dirs.size(); i++) if (!dirs.get(i).equals(dirs.get(i - 1))) changes++;
+        return changes >= 2;
+    }
+
     private int smoothingTarget(BetterBlockPos feet) {
         int best = pathPosition;
         if (!ctx.player().onGround()) {

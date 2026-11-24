@@ -267,6 +267,18 @@ public class MovementParkour extends Movement {
         }
 
         MovementHelper.moveTowards(ctx, state, dest);
+        if (!ctx.player().onGround()) {
+            // Air Client: with Jump Boost a 2-block gap is 40+ ticks of flight. Above the landing
+            // block, aiming at its centre turned the camera round and pulled the player back into
+            // the gap (level 5 runs: 22 falls at one gap). Keep the view, only brake onto it.
+            double px = ctx.player().position().x, pz = ctx.player().position().z;
+            boolean overDest = px >= dest.getX() - 0.2 && px <= dest.getX() + 1.2
+                    && pz >= dest.getZ() - 0.2 && pz <= dest.getZ() + 1.2;
+            if (overDest) {
+                MovementHelper.steerWhileLanding(ctx, state, src, dest);
+                return state;
+            }
+        }
         if (ctx.playerFeet().equals(dest)) {
             Block d = BlockStateInterface.getBlock(ctx, dest);
             if (d == Blocks.VINE || d == Blocks.LADDER) {

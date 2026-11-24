@@ -330,3 +330,32 @@ tasks.register('killMapTest', JavaExec) {
     javaLauncher = javaToolchains.launcherFor { languageVersion = JavaLanguageVersion.of(25) }
 }
 tasks.named('check') { dependsOn 'killMapTest' }
+tasks.register('pathfinderFuzz', JavaExec) {
+    dependsOn voiceTestClasses, clientClasses
+    classpath = sourceSets.voiceTest.runtimeClasspath
+    mainClass = 'com.coflnet.pathing.astar.fuzz.FuzzMain'
+    javaLauncher = javaToolchains.launcherFor { languageVersion = JavaLanguageVersion.of(25) }
+    if (project.hasProperty('fuzzArgs')) {
+        args project.property('fuzzArgs').split('\\s+')
+    }
+}
+
+// Simulation (tools/sim/evolve.py): writes how runClient starts the game, so the runner can start
+// several instances itself, each in its own folder (run-sim/<n>).
+tasks.register('simExport') {
+    // what runClient needs (classes, assets, launch config) - but not runClient itself
+    dependsOn { tasks.getByName('runClient').taskDependencies.getDependencies(tasks.getByName('runClient')) }
+    doLast {
+        def rc = tasks.getByName('runClient')
+        def out = file('build/sim/launch.json')
+        out.parentFile.mkdirs()
+        out.text = groovy.json.JsonOutput.prettyPrint(groovy.json.JsonOutput.toJson([
+                java     : rc.javaLauncher.get().executablePath.asFile.absolutePath,
+                jvmArgs  : rc.allJvmArgs,
+                classpath: rc.classpath.files.collect { it.absolutePath },
+                mainClass: rc.mainClass.get(),
+                args     : rc.args,
+        ]))
+        println "Simulation launch written to ${out}"
+    }
+}

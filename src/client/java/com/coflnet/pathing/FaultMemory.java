@@ -162,7 +162,7 @@ public final class FaultMemory {
         if (faults == null || faults.isEmpty()) {
             return;
         }
-        long now = System.currentTimeMillis();
+        long now = com.coflnet.pathing.sim.SimClock.millis();
         for (Fault fault : faults.values()) {
             if (!fault.confirmed && !confirms(fault.count, config.faultMinCount)) {
                 continue;
@@ -200,7 +200,7 @@ public final class FaultMemory {
             return;
         }
         PathfinderConfig config = PathfinderConfig.get();
-        long now = System.currentTimeMillis();
+        long now = com.coflnet.pathing.sim.SimClock.millis();
         List<Map.Entry<Map<Long, Fault>, Map.Entry<Long, Fault>>> all = new ArrayList<>();
         for (Map<Long, Fault> faults : WORLDS.values()) {
             faults.entrySet().removeIf(entry -> decay(entry.getValue().count,

@@ -34,7 +34,8 @@ public final class MovementStyle {
 
     /** Easing rate (1/s): how quickly the camera closes in on where it wants to look. */
     public static double easeRate() {
-        return 10.0 - 6.5 * calm();
+        // High enough that the configured turn speed is the real limit, not the easing.
+        return Math.max(14.0, 24.0 - 10.0 * calm());
     }
 
     /** Smaller differences than this (degrees) do not start a turn: no micro corrections. */

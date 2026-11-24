@@ -712,7 +712,7 @@ public final class  ClickGuiScreen extends Screen {
             add(pathfinder,new CombatSlider(panelWidth-20,"Calm movement %",0,100,5,
                     ()->pf.movementCalmness,v->{pf.movementCalmness=v;pf.save();}),26);
             options(pathfinder,"Tuning",()-> {
-                add(pathfinder,new CombatSlider(panelWidth-20,"Max turn (deg/tick)",10,180,5,
+                add(pathfinder,new CombatSlider(panelWidth-20,"Max turn (deg/tick)",10,60,5,
                         ()->pf.maxTurnPerTick,v->{pf.maxTurnPerTick=v;pf.save();}),26);
                 add(pathfinder,new CombatSlider(panelWidth-20,"Jump penalty",0,10,.5,
                         ()->pf.jumpPenalty,v->{pf.jumpPenalty=v;pf.save();}),26);
@@ -757,6 +757,10 @@ public final class  ClickGuiScreen extends Screen {
                         ()->pf.aotvTeleportBlocks,v->{pf.aotvTeleportBlocks=(int)Math.round(v);pf.save();}),26);
                 add(pathfinder,new CombatSlider(panelWidth-20,"Min gain",3,40,1,
                         ()->pf.aotvMinGain,v->{pf.aotvMinGain=(int)Math.round(v);pf.save();}),26);
+                add(pathfinder,new CombatSlider(panelWidth-20,"Etherwarp turn",120,1200,10,
+                        ()->pf.etherwarpRotationSpeed,v->{pf.etherwarpRotationSpeed=v;pf.save();}),26);
+                add(pathfinder,new CombatSlider(panelWidth-20,"Teleport turn",120,1200,10,
+                        ()->pf.teleportRotationSpeed,v->{pf.teleportRotationSpeed=v;pf.save();}),26);
                 optionLabel(pathfinder,"Warps: "+com.coflnet.pathing.AotvAssist.warps());
             });
             toggle(pathfinder,"Learn from faults",()->pf.learnFromFaults,()->{pf.learnFromFaults=!pf.learnFromFaults;pf.save();});
@@ -1079,7 +1083,7 @@ public final class  ClickGuiScreen extends Screen {
                 optionLabel(skyblock,"One-hit: 1 click, then next target");
                 add(skyblock,new CombatSlider(panelWidth-20,"Follow distance",1,16,1,
                     ()->PlayerSettings.followDistance,v->PlayerSettings.followDistance=(int)Math.round(v)),26);
-                add(skyblock,new CombatSlider(panelWidth-20,"Rotation speed",30,1080,10,
+                add(skyblock,new CombatSlider(panelWidth-20,"Turn to enemy",30,1080,10,
                     ()->PlayerSettings.combatRotationSpeed,v->PlayerSettings.combatRotationSpeed=(float)v),26);
                 add(skyblock,new CombatSlider(panelWidth-20,"CPS min",1,20,.5,
                     ()->PlayerSettings.followCpsMin,v->{PlayerSettings.followCpsMin=v;
