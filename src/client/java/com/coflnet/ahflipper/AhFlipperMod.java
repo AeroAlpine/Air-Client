@@ -2437,7 +2437,7 @@ public class AhFlipperMod {
         return isBusy();
     }
 
-    static boolean isBusy() {
+    public static boolean isBusy() {
         return AutomationGate.isBusy();
     }
 

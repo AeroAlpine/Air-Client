@@ -76,6 +76,14 @@ public final class AhBidMacro {
         volatile int listingTries;
         volatile boolean claimed;
         volatile boolean refunded;
+        /**
+         * Outbid in chat after our last bid (cleared only by a new bid of ours). The chat is the
+         * truth: the API often still showed us as highest bidder for a minute, which cleared the
+         * rebid and showed "Highest bidder" in the panel.
+         */
+        volatile boolean outbid;
+        /** The new highest bid from the outbid message (our bid + "outbid you by X"), 0 = unknown. */
+        volatile long outbidHighest;
         /** Matching items in the inventory when the bid was placed. */
         final int inventoryBaseline;
 
@@ -160,7 +168,7 @@ public final class AhBidMacro {
             }
             String status = tracked.end > 0 && tracked.end <= now
                     ? "ENDED"
-                    : REBID_COMMANDS.containsKey(uuidKey(tracked.uuid))
+                    : tracked.outbid || REBID_COMMANDS.containsKey(uuidKey(tracked.uuid))
                     ? "OUTBID" : "HIGHEST";
             result.add(new BidView(tracked.uuid, tracked.tag, tracked.name,
                     tracked.bid, tracked.value, tracked.end, status));
@@ -353,6 +361,13 @@ public final class AhBidMacro {
                 ProfitTracker.receive(ProfitTracker.AH, outbid.bid);
                 outbid.refunded = true;
             }
+            if (outbid != null) {
+                outbid.outbid = true;
+                long by = outbidAmount(ScreenUtil.cleanName(message.getString()));
+                if (by > 0) {
+                    outbid.outbidHighest = Math.max(outbid.outbidHighest, outbid.bid + by);
+                }
+            }
             REBID_DUE.remove(uuidKey(clickUuid)); // a new outbid: a new cooldown
             soon = rebidDue(clickUuid) - now <= 1_500L;
             REBID_COMMANDS.put(clickUuid, clickCommand);
@@ -449,7 +464,7 @@ public final class AhBidMacro {
         details.end = tracked.end;
         details.bin = false;
         details.rawStartingBid = Math.max(0, tracked.bid);
-        details.highestBidAmount = Math.max(0, tracked.bid);
+        details.highestBidAmount = Math.max(0, Math.max(tracked.bid, tracked.outbidHighest));
         details.startingBid = details.highestBidAmount;
         return details;
     }
@@ -524,8 +539,8 @@ public final class AhBidMacro {
                 long highest = Math.max(0, details.highestBidAmount);
                 boolean bidderMissing = details.highestBidder == null
                         || details.highestBidder.isBlank();
-                boolean own = AhFlipperMod.isOwnSeller(details.highestBidder, "")
-                        || (bidderMissing && tracked.bid > 0 && highest <= tracked.bid);
+                boolean own = !tracked.outbid && (AhFlipperMod.isOwnSeller(details.highestBidder, "")
+                        || (bidderMissing && tracked.bid > 0 && highest <= tracked.bid));
                 if (details.end > 0 && details.end <= System.currentTimeMillis()) {
                     if (own) {
                         settle(tracked);
@@ -549,7 +564,16 @@ public final class AhBidMacro {
                     concedeToProtected(tracked.uuid, tracked.name);
                     continue;
                 }
+                if (tracked.outbid && recentlyRejected(tracked.uuid)
+                        && !REBID_COMMANDS.containsKey(uuidKey(tracked.uuid))) {
+                    // outbid and the rebid was not worth it: this auction is lost
+                    TRACKED.remove(tracked.uuid);
+                    continue;
+                }
                 if (highest <= tracked.bid) {
+                    if (tracked.outbid) {
+                        continue; // the API is behind the outbid message: wait for the rebid
+                    }
                     REBID_DUE.remove(uuidKey(tracked.uuid));
                     REBID_COMMANDS.remove(uuidKey(tracked.uuid));
                     REBID_DUE.remove(uuidKey(tracked.uuid));
@@ -775,21 +799,19 @@ public final class AhBidMacro {
                 AhMarketData.RuneStats rune = runeLevel > 0
                         && AhItem.isRuneTag(auction.tag)
                         ? AhMarketData.runeStats(auction.tag, runeLevel) : null;
-                if (rune == null || rune.sales < 2 || rune.median <= 0) {
+                // no clean market price: the detailed valuation (addons, comparable sales) may
+                // still find the value - analysed after the ones with a known price
+                value = rune != null && rune.sales >= 2 && rune.median > 0 ? rune.median : 0;
+                if (value <= 0) {
                     skipNoMarket++;
-                    continue;
                 }
-                value = rune.median;
             } else {
+                // low volume is no reason to skip here: the valuation checks the sales itself
+                // (this cut dropped most auctions before they were ever looked at)
                 if (entry.volume < AhFlipperMod.CONFIG.scanMinVolume) {
                     skipVolume++;
-                    continue;
                 }
                 value = entry.value();
-            }
-            if (value <= 0) {
-                skipNoMarket++;
-                continue;
             }
             long bid = nextBid(auction.startingBid, auction.highestBidAmount);
             if (bid <= 0) {
@@ -824,7 +846,7 @@ public final class AhBidMacro {
                 uniqueCandidates.add(candidate);
             }
         }
-        int analysisLimit = Math.min(90, Math.max(uniqueCandidates.size(),
+        int analysisLimit = Math.min(160, Math.max(uniqueCandidates.size(),
                 Math.max(maxCandidates, maxBids) * 3));
         List<ScoredCandidate> scored = new ArrayList<>();
         int analyzed = 0;
@@ -879,8 +901,8 @@ public final class AhBidMacro {
                 continue;
             }
             AhAnalyzer.Result result = AhAnalyzer.analyze(apiItem, bid, 1, details.uuid, 0);
-            String reason = profitable(result, target, details.itemName)
-                    ? "" : rejectionReason(result, target);
+            String reason = bidValue(result, bid, target, details.itemName, false, 0) > 0
+                    ? "" : lastBidReject;
             analyzedRows.add(new ReportRow(details.itemName, details.tag, details.uuid,
                     details.end, bid,
                     result == null ? 0 : result.expectedValue,
@@ -1097,9 +1119,11 @@ public final class AhBidMacro {
             remember(details.uuid);
             return false;
         }
+        Tracked before = trackedFor(details.uuid);
+        long fallbackValue = rebid && before != null ? before.value : 0;
         if (!skipPreAnalysis && result == null) {
             result = AhAnalyzer.analyze(apiItem, bid, 1, details.uuid, 0);
-            if (!profitable(result, target, details.itemName)) {
+            if (bidValue(result, bid, target, details.itemName, rebid, fallbackValue) <= 0) {
                 remember(details.uuid);
                 return false;
             }
@@ -1161,7 +1185,8 @@ public final class AhBidMacro {
                 }
             }
             result = AhAnalyzer.analyze(item, bid, 1, details.uuid, 0);
-            if (!profitable(result, target, item.displayName)) {
+            long value = bidValue(result, bid, target, item.displayName, rebid, fallbackValue);
+            if (value <= 0) {
                 remember(details.uuid);
                 return false;
             }
@@ -1204,7 +1229,7 @@ public final class AhBidMacro {
                 ProfitTracker.receive(ProfitTracker.AH, previous.bid);
             }
             Tracked tracked = new Tracked(details.uuid, item.tag, item.displayName,
-                    bid, result.expectedValue, details.end);
+                    bid, value, details.end);
             ProfitTracker.spend(ProfitTracker.AH, bid);
             TRACKED.put(details.uuid, tracked);
             if (TRACKED.size() > MAX_TRACKED) {
@@ -1216,7 +1241,7 @@ public final class AhBidMacro {
             AhFlipperMod.message((rebid ? "\u00a7eRebid" : "\u00a7aBid")
                     + "\u00a77: \u00a7f" + item.displayName + " \u00a77@ \u00a7f"
                     + ScreenUtil.formatCoins(bid) + " \u00a77(+\u00a7a"
-                    + String.format(Locale.US, "%.0f", result.profitPercent) + "%\u00a77)");
+                    + String.format(Locale.US, "%.0f", profitPercent(value, bid)) + "%\u00a77)");
             return true;
         } catch (Exception e) {
             System.out.println("[AH-Flipper] Bid-Macro Fehler: " + e.getMessage());
@@ -1285,6 +1310,96 @@ public final class AhBidMacro {
     private static boolean bidPlacedRecently(long windowMs) {
         long at = lastBidPlacedAt;
         return at > 0 && System.currentTimeMillis() - at <= Math.max(100L, windowMs);
+    }
+
+    /** Why the last {@link #bidValue} said no (for the scan report). */
+    private static volatile String lastBidReject = "";
+
+    /**
+     * The value to bid against, or -1 when the auction is not worth {@code bid}. Looser than
+     * the BIN flipper's verdict on purpose:
+     * <ul>
+     *   <li>its own profit target ("Gewinn x% < y%") does not count; the bid target does;</li>
+     *   <li>addon comparison unusable: the item is valued at its clean price (addons worth
+     *       nothing) instead of being thrown out - a 5-star Spicy AOTD at half its clean price
+     *       was rejected for that;</li>
+     *   <li>total sales: half the BIN minimum is enough (we hold a bid, not a bought item);</li>
+     *   <li>rebid: the item was accepted already - only the price counts (the same Weird Tuba
+     *       flipped between 119 and 121 sales and lost its rebid for it).</li>
+     * </ul>
+     */
+    private static long bidValue(AhAnalyzer.Result result, long bid, double target, String name,
+                                 boolean rebid, long fallbackValue) {
+        if (result == null) {
+            return rejectBid(name, "keine Analyse");
+        }
+        long value = result.expectedValue;
+        List<String> blocking = new ArrayList<>();
+        for (String reason : result.reasons) {
+            String r = reason == null ? "" : reason;
+            if (r.startsWith("Gewinn ")) {
+                continue;
+            }
+            if (r.startsWith("Addon-Vergleich unbrauchbar")) {
+                value = result.cleanPrice > 0 ? Math.min(Math.max(value, 0), result.cleanPrice) : -1;
+                if (value <= 0 && !rebid) {
+                    blocking.add(r);
+                }
+                continue;
+            }
+            if (r.startsWith("Zu wenig Gesamt-Verk")
+                    && result.overallSales * 2 >= AhFlipperMod.CONFIG.minTotalSales) {
+                continue;
+            }
+            blocking.add(r);
+        }
+        if (rebid) {
+            blocking.clear();
+            if (value <= 0) {
+                value = fallbackValue;
+            }
+        }
+        if (!blocking.isEmpty()) {
+            return rejectBid(name, "Filter: " + String.join("; ", blocking));
+        }
+        if (value <= 0) {
+            return rejectBid(name, "kein Wert");
+        }
+        if (value < AhFlipperMod.CONFIG.bidMacroMinValueCoins) {
+            return rejectBid(name, "Wert < " + ScreenUtil.formatCoins(AhFlipperMod.CONFIG.bidMacroMinValueCoins));
+        }
+        double percent = profitPercent(value, bid);
+        if (percent < target) {
+            return rejectBid(name, String.format(Locale.US, "Profit %.1f%% < %.1f%% (Wert %s, Gebot %s)",
+                    percent, target, ScreenUtil.formatCoins(value), ScreenUtil.formatCoins(bid)));
+        }
+        lastBidReject = "";
+        return value;
+    }
+
+    private static long rejectBid(String name, String why) {
+        lastBidReject = why;
+        System.out.println("[AH-Flipper] Bid-Macro: " + name + " nicht profitabel: " + why);
+        return -1;
+    }
+
+    private static final java.util.regex.Pattern OUTBID_BY = java.util.regex.Pattern
+            .compile("outbid you by ([\\d,.]+)\\s*coins", java.util.regex.Pattern.CASE_INSENSITIVE);
+
+    /** "x outbid you by 1,784,494 coins for ..." -> 1784494 (0 = not found). */
+    static long outbidAmount(String text) {
+        if (text == null) {
+            return 0;
+        }
+        java.util.regex.Matcher m = OUTBID_BY.matcher(text);
+        if (!m.find()) {
+            return 0;
+        }
+        try {
+            return Long.parseLong(m.group(1).replace(",", "").replace(".", ""));
+        } catch (NumberFormatException e) {
+            return 0;
+        }
     }
 
     private static boolean profitable(AhAnalyzer.Result result, double target, String name) {

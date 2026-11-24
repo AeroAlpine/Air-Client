@@ -92,6 +92,11 @@ public final class ServerRestartHandler {
         if (phase != Phase.IDLE || now - lastRestartAt < RESTART_COOLDOWN_MS) {
             return;
         }
+        if (!anyMacroRunning()) {
+            // nothing of ours runs: the player decides himself what to do about the reboot
+            System.out.println("[Restart] Scheduled reboot - no macro running, no warp sequence");
+            return;
+        }
         lastRestartAt = now;
         bidWasRunning = AhBidMacro.isRunning();
         ahWasRunning = AhFlipperMod.stopForRestart();
@@ -180,6 +185,13 @@ public final class ServerRestartHandler {
 
     public static boolean isActive() {
         return phase != Phase.IDLE;
+    }
+
+    /** One of the macros this sequence pauses and restores is running. */
+    private static boolean anyMacroRunning() {
+        com.coflnet.flipper.trading.Trader trader = com.coflnet.flipper.trading.Trader.get();
+        return AhBidMacro.isRunning() || AhFlipperMod.isRunning() || LowballingMod.isRunning()
+                || (trader != null && trader.isRunning());
     }
 
     /** Lowballing was started during the warp sequence: start it when done. */
